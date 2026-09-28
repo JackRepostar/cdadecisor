@@ -1,0 +1,21 @@
+[Unit]
+Description=CdaDecisor (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+# Utente dedicato, senza privilegi di sistema (crealo con: useradd -r -s /usr/sbin/nologin cdadecisor)
+User=cdadecisor
+Group=cdadecisor
+WorkingDirectory=/var/www/cdadecisor
+EnvironmentFile=/etc/cdadecisor/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/npm run start -- -p 3000
+Restart=on-failure
+RestartSec=5
+# L'app termina in modo pulito le richieste in corso su SIGTERM (vedi doc Next.js self-hosting).
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

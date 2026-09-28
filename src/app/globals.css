@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f7f5ef;
+  --paper-raised: #ffffff;
+  --ink: #1c1f26;
+  --ink-soft: #4a5164;
+  --line: #dedaca;
+  --navy: #1b2a41;
+  --navy-soft: #2c4160;
+  --gold: #b8912f;
+  --gold-soft: #f1e6c8;
+  --good: #2f7d5a;
+  --good-bg: #e4f2ea;
+  --bad: #b0392b;
+  --bad-bg: #fbeae6;
+  --pending-bg: #f3efe2;
+  --staff: #6b4fa0;
+  --staff-bg: #ede7f6;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-navy: var(--navy);
+  --color-navy-soft: var(--navy-soft);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-pending-bg: var(--pending-bg);
+  --color-staff: var(--staff);
+  --color-staff-bg: var(--staff-bg);
+
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-plex-mono);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}

@@ -1,0 +1,325 @@
+// Schema di CdaDecisor.
+// Convenzioni: enum in maiuscolo, id testuali (cuid) per restare stabili nei link (email, magic link).
+//
+// Multi-tenant: ogni azienda cliente è una Organization. Member, Proposal e Minutes
+// portano organizationId direttamente (isolamento esplicito, non solo per relazione),
+// perché sono le entità interrogate direttamente dalle pagine. Vote, StaffAssignment,
+// StaffFeedback, Attachment, EmailNotification, MinutesNotification ereditano
+// l'isolamento dal loro genitore (Proposal/Minutes): non vengono mai interrogate senza
+// passare da lì. PlatformAdmin/AccessGrant sono "sopra" le organizzazioni: è lo staff
+// di Quitebold, non un cliente.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MemberRole {
+  ADMIN
+  BOARD
+  STAFF
+}
+
+enum MemberStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum VoteChoice {
+  YES
+  NO
+}
+
+enum FeedbackPreference {
+  POSITIVE
+  NEGATIVE
+}
+
+enum ProposalStatus {
+  // In attesa della pubblicazione giornaliera (non visibile al Consiglio).
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum ProposalOutcome {
+  APPROVED
+  REJECTED
+}
+
+enum GrantDuration {
+  ONE_MONTH
+  THREE_MONTHS
+  SIX_MONTHS
+  TWELVE_MONTHS
+  LIFETIME
+}
+
+// Un'azienda cliente. Contiene anche i dati usati in intestazione al PDF dei
+// verbali (prima erano in una tabella CompanySettings a sé, ora inutile: ogni
+// azienda ha la propria).
+model Organization {
+  id               String   @id @default(cuid())
+  name             String
+  legalForm        String   @default("")
+  registeredOffice String   @default("")
+  taxId            String   @default("")
+  // Usato solo come identificatore leggibile (es. per un futuro sottodominio); non
+  // ancora usato per il routing.
+  slug             String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  members       Member[]
+  proposals     Proposal[]
+  minutesList   Minutes[]
+  accessGrants  AccessGrant[]
+}
+
+model Member {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  firstName      String
+  lastName       String
+  // Univoca in tutto il sistema (non solo nell'organizzazione): un indirizzo email
+  // corrisponde sempre a un solo account, in una sola azienda.
+  email          String       @unique
+  role           MemberRole
+  jobTitle       String
+  // Rilevante solo per i membri BOARD: gli STAFF sono attivi subito, l'ADMIN non lo usa.
+  status         MemberStatus @default(VERIFIED)
+  color          String
+  // Soft delete: il profilo resta per non perdere lo storico di voti/pareri/proposte.
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // Solo un membro BOARD alla volta può avere isPresident=true (vincolo applicativo,
+  // non a livello di database). È l'unico a cui viene chiesto di collegare la firma
+  // elettronica, necessaria per firmare i verbali.
+  isPresident          Boolean   @default(false)
+  // Predisposizione per un futuro provider di firma qualificata (es. InfoCert, Aruba,
+  // Namirial): per ora "collegare la firma" è solo una simulazione (nessun provider reale).
+  signatureProvider    String?
+  signatureConnectedAt DateTime?
+
+  proposalsAuthored Proposal[]         @relation("ProposalAuthor")
+  proposalsCreated  Proposal[]         @relation("ProposalCreatedBy")
+  votes             Vote[]
+  staffAssignments  StaffAssignment[]
+  staffFeedback     StaffFeedback[]
+  magicLinkTokens   MagicLinkToken[]
+  signedMinutes     Minutes[]          @relation("MinutesSignedBy")
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([role])
+}
+
+model Proposal {
+  id             String           @id @default(cuid())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  title          String
+  description    String
+  status         ProposalStatus   @default(DRAFT)
+  outcome        ProposalOutcome?
+  createdAt      DateTime         @default(now())
+  publishedAt    DateTime?
+  closedAt       DateTime?
+
+  // Il consigliere titolare della proposta (chi la vota è il resto del CdA, lui compreso).
+  author   Member @relation("ProposalAuthor", fields: [authorId], references: [id])
+  authorId String
+
+  // Chi ha effettivamente premuto "Invia": se l'Amministratore l'ha creata per conto
+  // dell'author, qui c'è l'Amministratore stesso; altrimenti coincide con l'autore.
+  createdBy   Member @relation("ProposalCreatedBy", fields: [createdById], references: [id])
+  createdById String
+
+  votes            Vote[]
+  attachments      Attachment[]
+  staffAssignments StaffAssignment[]
+  staffFeedback    StaffFeedback[]
+  notifications    EmailNotification[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([authorId])
+}
+
+model Vote {
+  id         String     @id @default(cuid())
+  proposal   Proposal   @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalId String
+  member     Member     @relation(fields: [memberId], references: [id])
+  memberId   String
+  choice     VoteChoice
+  motivation String
+  createdAt  DateTime   @default(now())
+
+  @@unique([proposalId, memberId])
+  @@index([memberId])
+}
+
+// Membri dello staff coinvolti su una specifica proposta per un parere consultivo.
+model StaffAssignment {
+  id         String   @id @default(cuid())
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalId String
+  member     Member   @relation(fields: [memberId], references: [id])
+  memberId   String
+  createdAt  DateTime @default(now())
+
+  @@unique([proposalId, memberId])
+  @@index([memberId])
+}
+
+model StaffFeedback {
+  id         String             @id @default(cuid())
+  proposal   Proposal           @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalId String
+  member     Member             @relation(fields: [memberId], references: [id])
+  memberId   String
+  preference FeedbackPreference
+  comment    String
+  createdAt  DateTime           @default(now())
+
+  @@unique([proposalId, memberId])
+  @@index([memberId])
+}
+
+model Attachment {
+  id         String   @id @default(cuid())
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalId String
+  filename   String
+  mimeType   String
+  size       Int
+  // Percorso relativo dentro la cartella di storage privata (non pubblica).
+  storageKey String
+  createdAt  DateTime @default(now())
+
+  @@index([proposalId])
+}
+
+// Token per il login "magic link" (passwordless).
+model MagicLinkToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  member    Member    @relation(fields: [memberId], references: [id])
+  memberId  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([memberId])
+}
+
+// Registro delle email che l'app "invia": in sviluppo restano solo qui (nessun invio reale)
+// e sono consultabili da /dev/email; in produzione lo stesso record accompagna l'invio vero.
+model EmailNotification {
+  id         String   @id @default(cuid())
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  proposalId String
+  toEmail    String
+  toName     String
+  subject    String
+  htmlBody   String
+  createdAt  DateTime @default(now())
+
+  @@index([proposalId])
+}
+
+// Verbale ufficiale generato automaticamente ogni 30 giorni con le delibere del periodo.
+// Il contenuto è "congelato" in snapshot al momento della generazione: eliminare o
+// modificare un membro/proposta in seguito non altera più un verbale già emesso.
+model Minutes {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  periodStart    DateTime
+  periodEnd      DateTime
+  createdAt      DateTime     @default(now())
+  // Struttura: { presidentName: string|null, boardMembers: [{name, jobTitle}],
+  // proposals: [{ id, title, description, authorName, createdAt, closedAt, outcome,
+  // votes: [...], staffFeedback: [...], attachments: [...] }] }
+  snapshot       Json
+
+  // Predisposizione firma: valorizzato solo quando il Presidente in carica al momento
+  // firma il verbale (per ora una simulazione, non una vera firma qualificata).
+  signedAt         DateTime?
+  signedBy         Member?   @relation("MinutesSignedBy", fields: [signedByMemberId], references: [id])
+  signedByMemberId String?
+
+  notifications MinutesNotification[]
+
+  @@index([organizationId])
+  @@index([periodEnd])
+}
+
+model MinutesNotification {
+  id        String   @id @default(cuid())
+  minutes   Minutes  @relation(fields: [minutesId], references: [id], onDelete: Cascade)
+  minutesId String
+  toEmail   String
+  toName    String
+  subject   String
+  htmlBody  String
+  createdAt DateTime @default(now())
+
+  @@index([minutesId])
+}
+
+// --- Livello piattaforma (staff di Quitebold, non un cliente) -------------------
+
+// Account dello staff Quitebold che gestisce le organizzazioni clienti dal
+// pannello /quitebold. Autenticazione separata da quella dei clienti.
+model PlatformAdmin {
+  id        String   @id @default(cuid())
+  firstName String
+  lastName  String
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  magicLinkTokens PlatformMagicLinkToken[]
+  accessGrants    AccessGrant[]
+}
+
+model PlatformMagicLinkToken {
+  id              String        @id @default(cuid())
+  token           String        @unique
+  platformAdmin   PlatformAdmin @relation(fields: [platformAdminId], references: [id])
+  platformAdminId String
+  expiresAt       DateTime
+  usedAt          DateTime?
+  createdAt       DateTime      @default(now())
+
+  @@index([platformAdminId])
+}
+
+// Sblocco manuale, concesso da Quitebold, che rende un'organizzazione a tutti gli
+// effetti "sul piano pieno" senza passare da un abbonamento pagato: nessun limite
+// di consiglieri o di membri dello staff finché il grant è attivo. Pensato per
+// omaggi, prove estese, clienti convenzionati. `expiresAt` nullo = Lifetime.
+model AccessGrant {
+  id             String        @id @default(cuid())
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  grantedBy      PlatformAdmin @relation(fields: [grantedById], references: [id])
+  grantedById    String
+  duration       GrantDuration
+  startsAt       DateTime      @default(now())
+  expiresAt      DateTime?
+  note           String?
+  revokedAt      DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId])
+}
