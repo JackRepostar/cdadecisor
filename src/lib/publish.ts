@@ -2,15 +2,16 @@ import "server-only";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 import { notifyBoardOfNewProposal } from "@/lib/notifications";
+import { zonedTodayAt, zonedStartOfDayUTC } from "@/lib/timezone";
 
-// Ora locale dopo la quale le richieste accumulate nella giornata vengono
-// pubblicate tutte insieme al Consiglio (non in tempo reale).
+// Ora locale (fuso Europa/Roma, non quello del server) dopo la quale le richieste
+// accumulate nella giornata vengono pubblicate tutte insieme al Consiglio (non in
+// tempo reale).
 const PUBLISH_HOUR = 15;
 
 /** Testo da mostrare a chi ha appena creato una richiesta: quando diventerà visibile. */
 export function describeNextPublish(now: Date = new Date()) {
-  const todayAt15 = new Date(now);
-  todayAt15.setHours(PUBLISH_HOUR, 0, 0, 0);
+  const todayAt15 = zonedTodayAt(PUBLISH_HOUR, now);
   const isToday = now < todayAt15;
   return isToday
     ? `oggi alle ${PUBLISH_HOUR}:00`
@@ -24,17 +25,17 @@ export function describeNextPublish(now: Date = new Date()) {
  * invia/registra la relativa email) in un solo colpo. Le richieste create dopo
  * le 15:00 di oggi restano in coda per il blocco di domani, anche se qualcuno
  * visita il sito nel frattempo: usiamo `publishedAt` di oggi come prova che il
- * blocco odierno è già partito, invece di un cron esterno (non disponibile in
- * questo ambiente di sviluppo locale).
+ * blocco odierno è già partito. Il trigger è il primo accesso all'app dopo le
+ * 15:00 (fuso Europa/Roma): finché non è collegato un cron esterno (vedi
+ * /api/cron/tick), se nessuno visita il sito dopo le 15:00 la pubblicazione
+ * resta in sospeso fino alla prima visita successiva.
  */
 export const publishDueProposals = cache(async () => {
   const now = new Date();
-  const publishThreshold = new Date(now);
-  publishThreshold.setHours(PUBLISH_HOUR, 0, 0, 0);
+  const publishThreshold = zonedTodayAt(PUBLISH_HOUR, now);
   if (now < publishThreshold) return;
 
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
+  const startOfToday = zonedStartOfDayUTC(now);
 
   // Il blocco è per organizzazione: se oggi Azienda A ha già pubblicato non deve
   // impedire che Azienda B (che magari ha creato le sue bozze più tardi) pubblichi
