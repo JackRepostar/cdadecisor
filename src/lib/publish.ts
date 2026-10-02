@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
-import { notifyBoardOfNewProposal } from "@/lib/notifications";
+import { sendRecapForOrganization } from "@/lib/notifications";
 import { zonedTodayAt, zonedStartOfDayUTC } from "@/lib/timezone";
 
 // Ora locale (fuso Europa/Roma, non quello del server) dopo la quale le richieste
@@ -26,9 +26,8 @@ export function describeNextPublish(now: Date = new Date()) {
  * le 15:00 di oggi restano in coda per il blocco di domani, anche se qualcuno
  * visita il sito nel frattempo: usiamo `publishedAt` di oggi come prova che il
  * blocco odierno è già partito. Il trigger è il primo accesso all'app dopo le
- * 15:00 (fuso Europa/Roma): finché non è collegato un cron esterno (vedi
- * /api/cron/tick), se nessuno visita il sito dopo le 15:00 la pubblicazione
- * resta in sospeso fino alla prima visita successiva.
+ * 15:00 (fuso Europa/Roma) oppure la chiamata del cron (vedi /api/cron/tick e
+ * vercel.json), così la pubblicazione e il recap partono anche senza visite.
  */
 export const publishDueProposals = cache(async () => {
   const now = new Date();
@@ -56,13 +55,25 @@ export const publishDueProposals = cache(async () => {
       where: { organizationId, status: "DRAFT" },
       select: { id: true },
     });
+    if (drafts.length === 0) continue;
 
-    for (const draft of drafts) {
-      await prisma.proposal.update({
-        where: { id: draft.id },
-        data: { status: "OPEN", publishedAt: now },
-      });
-      await notifyBoardOfNewProposal(draft.id);
+    // Pubblicazione atomica: se due richieste (cron e visita al sito) arrivano
+    // insieme, solo una "conquista" le bozze e invia il recap; l'altra trova zero righe.
+    const published = await prisma.proposal.updateManyAndReturn({
+      where: { id: { in: drafts.map((d) => d.id) }, status: "DRAFT" },
+      data: { status: "OPEN", publishedAt: now },
+      select: { id: true },
+    });
+    if (published.length === 0) continue;
+
+    // Un errore nell'invio del recap non deve mai annullare né bloccare la pubblicazione.
+    try {
+      await sendRecapForOrganization(
+        organizationId,
+        published.map((p) => p.id)
+      );
+    } catch (error) {
+      console.error("Invio del recap fallito:", error);
     }
   }
 });

@@ -1,9 +1,32 @@
 import "server-only";
 import crypto from "node:crypto";
 import { prisma } from "@/lib/prisma";
-import { isEmailSendingEnabled, sendEmail } from "@/lib/email-sender";
+import { isDevLinkAllowed, isEmailSendingEnabled, sendEmail } from "@/lib/email-sender";
 
 const TOKEN_TTL_MINUTES = 15;
+// Il link "Vota" nel recap delle 15:00 può essere aperto ore dopo l'arrivo
+// dell'email: validità più lunga del normale link di accesso, ma sempre monouso.
+const RECAP_TOKEN_TTL_HOURS = 24;
+
+function appBaseUrl() {
+  return process.env.APP_BASE_URL ?? "http://localhost:3000";
+}
+
+/**
+ * Crea un link di accesso monouso per ciascun membro indicato (recap giornaliero).
+ * Restituisce memberId -> URL. L'URL contiene un'autenticazione: va solo nel
+ * corpo dell'email spedita, mai nell'archivio consultabile dall'amministratore.
+ */
+export async function createRecapLoginUrls(memberIds: string[]) {
+  const expiresAt = new Date(Date.now() + RECAP_TOKEN_TTL_HOURS * 3600_000);
+  const rows = memberIds.map((memberId) => ({
+    memberId,
+    token: crypto.randomBytes(32).toString("base64url"),
+    expiresAt,
+  }));
+  if (rows.length) await prisma.magicLinkToken.createMany({ data: rows });
+  return new Map(rows.map((r) => [r.memberId, `${appBaseUrl()}/auth/verifica?token=${r.token}`]));
+}
 
 export type MagicLinkResult =
   | { status: "not_found" }
@@ -27,6 +50,14 @@ export async function requestMagicLink(rawEmail: string): Promise<MagicLinkResul
     return { status: "rejected" };
   }
 
+  const emailReady = isEmailSendingEnabled();
+  if (!emailReady && !isDevLinkAllowed()) {
+    console.error(
+      "Accesso impossibile: nessun provider email configurato (RESEND_API_KEY o SMTP_*) e il link a schermo è disattivato in produzione."
+    );
+    return { status: "sent", devLoginUrl: null };
+  }
+
   const token = crypto.randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MINUTES * 60_000);
 
@@ -34,20 +65,35 @@ export async function requestMagicLink(rawEmail: string): Promise<MagicLinkResul
     data: { token, memberId: member.id, expiresAt },
   });
 
-  const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  const loginUrl = `${baseUrl}/auth/verifica?token=${token}`;
+  const loginUrl = `${appBaseUrl()}/auth/verifica?token=${token}`;
 
-  if (isEmailSendingEnabled()) {
-    await sendEmail({
-      to: member.email,
-      subject: "Il tuo link di accesso a CdaDecisor",
-      html: buildLoginEmailHtml(member.firstName, loginUrl),
-    });
+  if (emailReady) {
+    try {
+      await sendEmail({
+        to: member.email,
+        subject: "Il tuo link di accesso a CdaDecisor",
+        html: buildLoginEmailHtml(member.firstName, loginUrl),
+      });
+    } catch (error) {
+      // Risposta identica al caso "indirizzo non registrato": un errore del
+      // provider non deve rivelare se l'email esiste né rompere la pagina.
+      console.error("Invio del link di accesso fallito:", error);
+    }
     return { status: "sent", devLoginUrl: null };
   }
 
-  console.log(`\n✉️  [DEV] Link di accesso per ${member.email}:\n${loginUrl}\n`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`\n✉️  [DEV] Link di accesso per ${member.email}:\n${loginUrl}\n`);
+  }
   return { status: "sent", devLoginUrl: loginUrl };
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function buildLoginEmailHtml(firstName: string, loginUrl: string) {
@@ -60,7 +106,7 @@ function buildLoginEmailHtml(firstName: string, loginUrl: string) {
     <div style="color:#ffffff;font-size:18px;font-weight:700;margin-top:6px;font-family:Georgia,serif;">Il tuo link di accesso</div>
   </td></tr>
   <tr><td style="padding:26px 32px 8px;">
-    <p style="font-size:14px;color:#1C1F26;margin:0 0 14px;font-family:Georgia,serif;">Gentile ${firstName},</p>
+    <p style="font-size:14px;color:#1C1F26;margin:0 0 14px;font-family:Georgia,serif;">Gentile ${escapeHtml(firstName)},</p>
     <p style="font-size:13.5px;color:#4A5164;line-height:1.6;margin:0 0 20px;font-family:Arial,sans-serif;">Usa il pulsante qui sotto per accedere a CdaDecisor. Il link è valido 15 minuti e può essere usato una sola volta.</p>
   </td></tr>
   <tr><td style="padding:0 32px 28px;text-align:center;">
@@ -84,10 +130,13 @@ export async function verifyMagicLinkToken(token: string): Promise<VerifyResult>
   if (record.usedAt) return { status: "used" };
   if (record.expiresAt < new Date()) return { status: "expired" };
 
-  await prisma.magicLinkToken.update({
-    where: { id: record.id },
+  // Consumo atomico: se due richieste arrivano insieme (es. un antivirus aziendale
+  // e il destinatario) una sola può usare il link.
+  const claimed = await prisma.magicLinkToken.updateMany({
+    where: { id: record.id, usedAt: null },
     data: { usedAt: new Date() },
   });
+  if (claimed.count === 0) return { status: "used" };
 
   return { status: "ok", memberId: record.memberId };
 }

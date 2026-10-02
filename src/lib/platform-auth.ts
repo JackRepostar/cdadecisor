@@ -5,7 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { isEmailSendingEnabled, sendEmail } from "@/lib/email-sender";
+import { isDevLinkAllowed, isEmailSendingEnabled, sendEmail } from "@/lib/email-sender";
 import type { PlatformAdmin } from "@prisma/client";
 
 // Sessione e login separati da quelli dei clienti: lo staff Quitebold non è un
@@ -80,6 +80,14 @@ export async function requestPlatformMagicLink(rawEmail: string): Promise<Platfo
   });
   if (!admin) return { status: "not_found" };
 
+  const emailReady = isEmailSendingEnabled();
+  if (!emailReady && !isDevLinkAllowed()) {
+    console.error(
+      "Accesso al pannello impossibile: nessun provider email configurato e il link a schermo è disattivato in produzione."
+    );
+    return { status: "sent", devLoginUrl: null };
+  }
+
   const token = crypto.randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MINUTES * 60_000);
   await prisma.platformMagicLinkToken.create({ data: { token, platformAdminId: admin.id, expiresAt } });
@@ -87,16 +95,22 @@ export async function requestPlatformMagicLink(rawEmail: string): Promise<Platfo
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
   const loginUrl = `${baseUrl}/quitebold/auth/verifica?token=${token}`;
 
-  if (isEmailSendingEnabled()) {
-    await sendEmail({
-      to: admin.email,
-      subject: "Il tuo link di accesso al pannello Quitebold",
-      html: `<p>Gentile ${admin.firstName},</p><p>Accedi al pannello Quitebold: <a href="${loginUrl}">${loginUrl}</a></p><p>Il link scade tra 15 minuti.</p>`,
-    });
+  if (emailReady) {
+    try {
+      await sendEmail({
+        to: admin.email,
+        subject: "Il tuo link di accesso al pannello Quitebold",
+        html: `<p>Gentile ${admin.firstName.replace(/[&<>"]/g, "")},</p><p>Accedi al pannello Quitebold: <a href="${loginUrl}">${loginUrl}</a></p><p>Il link scade tra 15 minuti.</p>`,
+      });
+    } catch (error) {
+      console.error("Invio del link di accesso al pannello fallito:", error);
+    }
     return { status: "sent", devLoginUrl: null };
   }
 
-  console.log(`\n✉️  [DEV] Link di accesso pannello Quitebold per ${admin.email}:\n${loginUrl}\n`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`\n✉️  [DEV] Link di accesso pannello Quitebold per ${admin.email}:\n${loginUrl}\n`);
+  }
   return { status: "sent", devLoginUrl: loginUrl };
 }
 
@@ -112,6 +126,10 @@ export async function verifyPlatformMagicLinkToken(token: string): Promise<Platf
   if (record.usedAt) return { status: "used" };
   if (record.expiresAt < new Date()) return { status: "expired" };
 
-  await prisma.platformMagicLinkToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
+  const claimed = await prisma.platformMagicLinkToken.updateMany({
+    where: { id: record.id, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+  if (claimed.count === 0) return { status: "used" };
   return { status: "ok", platformAdminId: record.platformAdminId };
 }
