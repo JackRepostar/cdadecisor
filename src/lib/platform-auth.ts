@@ -104,6 +104,7 @@ export async function requestPlatformMagicLink(rawEmail: string): Promise<Platfo
       });
     } catch (error) {
       console.error("Invio del link di accesso al pannello fallito:", error);
+      if (isDevLinkAllowed()) return { status: "sent", devLoginUrl: loginUrl };
     }
     return { status: "sent", devLoginUrl: null };
   }

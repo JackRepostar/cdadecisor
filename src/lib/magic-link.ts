@@ -78,6 +78,9 @@ export async function requestMagicLink(rawEmail: string): Promise<MagicLinkResul
       // Risposta identica al caso "indirizzo non registrato": un errore del
       // provider non deve rivelare se l'email esiste né rompere la pagina.
       console.error("Invio del link di accesso fallito:", error);
+      // Deroga esplicita e temporanea (ALLOW_DEV_LOGIN_LINKS): se l'invio non funziona
+      // non si resta chiusi fuori. Senza deroga, in produzione, il link non si mostra mai.
+      if (isDevLinkAllowed()) return { status: "sent", devLoginUrl: loginUrl };
     }
     return { status: "sent", devLoginUrl: null };
   }

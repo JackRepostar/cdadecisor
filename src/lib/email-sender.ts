@@ -18,13 +18,32 @@ function hasResend() {
   return Boolean(process.env.RESEND_API_KEY);
 }
 
+// Incollando un valore nel pannello di Vercel capita di portarsi dietro spazi, a capo
+// o virgolette: li togliamo, così un copia-incolla impreciso non rompe l'invio.
+function cleanEnv(name: string) {
+  return (process.env[name] ?? "").trim().replace(/^["']+|["']+$/g, "").trim();
+}
+
 function hasGmailApi() {
   return Boolean(
-    process.env.GMAIL_USER &&
-      process.env.GMAIL_CLIENT_ID &&
-      process.env.GMAIL_CLIENT_SECRET &&
-      process.env.GMAIL_REFRESH_TOKEN
+    cleanEnv("GMAIL_USER") &&
+      cleanEnv("GMAIL_CLIENT_ID") &&
+      cleanEnv("GMAIL_CLIENT_SECRET") &&
+      cleanEnv("GMAIL_REFRESH_TOKEN")
   );
+}
+
+// Descrive le credenziali Gmail SENZA rivelarle (solo lunghezze e controlli di forma),
+// per capire da un log di produzione se un valore è stato incollato male.
+function describeGmailCredentials() {
+  const rawToken = process.env.GMAIL_REFRESH_TOKEN ?? "";
+  const token = cleanEnv("GMAIL_REFRESH_TOKEN");
+  const secret = cleanEnv("GMAIL_CLIENT_SECRET");
+  return [
+    `refresh_token: lunghezza ${token.length} (grezza ${rawToken.length}), inizia con "1//": ${token.startsWith("1//")}, forma valida: ${/^1\/\/[A-Za-z0-9_-]+$/.test(token)}`,
+    `client_secret: lunghezza ${secret.length}, inizia con "GOCSPX-": ${secret.startsWith("GOCSPX-")}`,
+    `client_id: ${cleanEnv("GMAIL_CLIENT_ID")}`,
+  ].join("; ");
 }
 
 function hasSmtp() {
@@ -47,7 +66,7 @@ export function isDevLinkAllowed() {
 
 function getFrom() {
   if (process.env.EMAIL_FROM) return process.env.EMAIL_FROM;
-  if (!hasResend() && hasGmailApi()) return `CdaDecisor <${process.env.GMAIL_USER}>`;
+  if (!hasResend() && hasGmailApi()) return `CdaDecisor <${cleanEnv("GMAIL_USER")}>`;
   if (!hasResend() && hasSmtp()) return `CdaDecisor <${process.env.SMTP_USER}>`;
   return "CdaDecisor <notifiche@quitebold.com>";
 }
@@ -99,14 +118,16 @@ async function getGmailAccessToken() {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: process.env.GMAIL_CLIENT_ID!,
-      client_secret: process.env.GMAIL_CLIENT_SECRET!,
-      refresh_token: process.env.GMAIL_REFRESH_TOKEN!,
+      client_id: cleanEnv("GMAIL_CLIENT_ID"),
+      client_secret: cleanEnv("GMAIL_CLIENT_SECRET"),
+      refresh_token: cleanEnv("GMAIL_REFRESH_TOKEN"),
       grant_type: "refresh_token",
     }),
   });
   if (!response.ok) {
-    throw new Error(`Autenticazione Gmail fallita (${response.status}): ${await response.text()}`);
+    throw new Error(
+      `Autenticazione Gmail fallita (${response.status}): ${await response.text()} | Diagnostica credenziali: ${describeGmailCredentials()}`
+    );
   }
   const data = (await response.json()) as { access_token: string; expires_in: number };
   gmailToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
