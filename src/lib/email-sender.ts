@@ -2,11 +2,13 @@ import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
 
 /**
- * Unico punto di invio email reale dell'applicativo. Due provider, scelti dalle
- * variabili d'ambiente (Resend ha la precedenza se entrambi sono configurati):
+ * Unico punto di invio email reale dell'applicativo. Tre provider, scelti dalle
+ * variabili d'ambiente (in ordine di precedenza):
  *  - Resend (API HTTP): RESEND_API_KEY, richiede un dominio verificato via DNS.
- *  - SMTP (es. Gmail / Google Workspace con "password per le app"): SMTP_HOST,
- *    SMTP_USER, SMTP_PASS. Non richiede modifiche ai DNS.
+ *  - Gmail API (OAuth, ambito gmail.send: può solo inviare, non leggere la posta):
+ *    GMAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN.
+ *    Non richiede modifiche ai DNS.
+ *  - SMTP (es. Gmail con "password per le app"): SMTP_HOST, SMTP_USER, SMTP_PASS.
  * Finché nessuno dei due è configurato chi chiama deve restare dietro un controllo
  * `isEmailSendingEnabled()`: in sviluppo l'app registra soltanto le email.
  */
@@ -16,12 +18,21 @@ function hasResend() {
   return Boolean(process.env.RESEND_API_KEY);
 }
 
+function hasGmailApi() {
+  return Boolean(
+    process.env.GMAIL_USER &&
+      process.env.GMAIL_CLIENT_ID &&
+      process.env.GMAIL_CLIENT_SECRET &&
+      process.env.GMAIL_REFRESH_TOKEN
+  );
+}
+
 function hasSmtp() {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
 export function isEmailSendingEnabled() {
-  return hasResend() || hasSmtp();
+  return hasResend() || hasGmailApi() || hasSmtp();
 }
 
 /**
@@ -36,6 +47,7 @@ export function isDevLinkAllowed() {
 
 function getFrom() {
   if (process.env.EMAIL_FROM) return process.env.EMAIL_FROM;
+  if (!hasResend() && hasGmailApi()) return `CdaDecisor <${process.env.GMAIL_USER}>`;
   if (!hasResend() && hasSmtp()) return `CdaDecisor <${process.env.SMTP_USER}>`;
   return "CdaDecisor <notifiche@quitebold.com>";
 }
@@ -79,8 +91,56 @@ async function sendViaResend(params: OutgoingEmail) {
   }
 }
 
+let gmailToken: { value: string; expiresAt: number } | null = null;
+
+async function getGmailAccessToken() {
+  if (gmailToken && gmailToken.expiresAt > Date.now() + 60_000) return gmailToken.value;
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GMAIL_CLIENT_ID!,
+      client_secret: process.env.GMAIL_CLIENT_SECRET!,
+      refresh_token: process.env.GMAIL_REFRESH_TOKEN!,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Autenticazione Gmail fallita (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { access_token: string; expires_in: number };
+  gmailToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return gmailToken.value;
+}
+
+// Costruisce il messaggio RFC 822 (intestazioni, codifica UTF-8) senza inviarlo.
+const rawMessageBuilder = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "unix" });
+
+async function sendViaGmailApi(params: OutgoingEmail) {
+  const built = await rawMessageBuilder.sendMail({
+    from: getFrom(),
+    to: params.to,
+    subject: params.subject,
+    html: params.html,
+  });
+  const raw = (built.message as Buffer).toString("base64url");
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${await getGmailAccessToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw }),
+  });
+  if (!response.ok) {
+    if (response.status === 401) gmailToken = null; // al prossimo invio se ne chiede uno nuovo
+    throw new Error(`Invio email a ${params.to} fallito (${response.status}): ${await response.text()}`);
+  }
+}
+
 export async function sendEmail(params: OutgoingEmail) {
   if (hasResend()) return sendViaResend(params);
+  if (hasGmailApi()) return sendViaGmailApi(params);
   if (hasSmtp()) {
     await getSmtpTransporter().sendMail({
       from: getFrom(),
@@ -90,7 +150,7 @@ export async function sendEmail(params: OutgoingEmail) {
     });
     return;
   }
-  throw new Error("Nessun provider email configurato (RESEND_API_KEY oppure SMTP_*).");
+  throw new Error("Nessun provider email configurato (RESEND_API_KEY, GMAIL_* oppure SMTP_*).");
 }
 
 /**
