@@ -4,7 +4,7 @@ export function Pill({
   tone,
   children,
 }: {
-  tone: "pending" | "approved" | "rejected" | "staff";
+  tone: "pending" | "approved" | "rejected" | "staff" | "new";
   children: ReactNode;
 }) {
   const toneClasses: Record<typeof tone, string> = {
@@ -12,6 +12,7 @@ export function Pill({
     approved: "bg-good-bg text-good",
     rejected: "bg-bad-bg text-bad",
     staff: "bg-staff-bg text-staff",
+    new: "bg-gold text-white uppercase",
   };
   return (
     <span

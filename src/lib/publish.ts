@@ -1,12 +1,13 @@
 import "server-only";
 import { cache } from "react";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendRecapForOrganization } from "@/lib/notifications";
-import { zonedTodayAt, zonedStartOfDayUTC } from "@/lib/timezone";
+import { zonedTodayAt, zonedDateKey } from "@/lib/timezone";
 
 // Ora locale (fuso Europa/Roma, non quello del server) dopo la quale le richieste
 // accumulate nella giornata vengono pubblicate tutte insieme al Consiglio (non in
-// tempo reale).
+// tempo reale) e parte il recap giornaliero.
 const PUBLISH_HOUR = 15;
 
 /** Testo da mostrare a chi ha appena creato una richiesta: quando diventerà visibile. */
@@ -18,62 +19,86 @@ export function describeNextPublish(now: Date = new Date()) {
     : `domani alle ${PUBLISH_HOUR}:00`;
 }
 
+async function runDailyRecapForOrganization(organizationId: string, day: string, now: Date) {
+  // Un'azienda senza alcuna richiesta (nemmeno in bozza) non ha nulla da comunicare.
+  if ((await prisma.proposal.count({ where: { organizationId } })) === 0) return;
+
+  // "Conquista" la giornata: la chiave unica (azienda, giorno) fa vincere una sola
+  // esecuzione se cron e visite al sito arrivano insieme; le altre non fanno nulla.
+  let run;
+  try {
+    run = await prisma.recapRun.create({ data: { organizationId, day } });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
+    throw error;
+  }
+
+  const drafts = await prisma.proposal.findMany({
+    where: { organizationId, status: "DRAFT" },
+    select: { id: true },
+  });
+  const published = drafts.length
+    ? await prisma.proposal.updateManyAndReturn({
+        where: { id: { in: drafts.map((d) => d.id) }, status: "DRAFT" },
+        data: { status: "OPEN", publishedAt: now },
+        select: { id: true },
+      })
+    : [];
+
+  // Un errore nell'invio non deve mai annullare né bloccare la pubblicazione.
+  try {
+    const result = await sendRecapForOrganization(
+      organizationId,
+      published.map((p) => p.id)
+    );
+    await prisma.recapRun.update({
+      where: { id: run.id },
+      data: {
+        published: published.length,
+        recipients: result.recipients,
+        sent: result.sent,
+        failed: result.failed,
+        error: result.firstError,
+      },
+    });
+  } catch (error) {
+    console.error("Invio del recap fallito:", error);
+    await prisma.recapRun.update({
+      where: { id: run.id },
+      data: {
+        published: published.length,
+        error: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+      },
+    });
+  }
+}
+
 /**
- * Da chiamare una volta per richiesta (layout dell'area autenticata). Implementa
- * la pubblicazione "in blocco una volta al giorno": dopo le 15:00, se il blocco
- * di oggi non è ancora partito, pubblica tutte le richieste ancora in bozza (e
- * invia/registra la relativa email) in un solo colpo. Le richieste create dopo
- * le 15:00 di oggi restano in coda per il blocco di domani, anche se qualcuno
- * visita il sito nel frattempo: usiamo `publishedAt` di oggi come prova che il
- * blocco odierno è già partito. Il trigger è il primo accesso all'app dopo le
- * 15:00 (fuso Europa/Roma) oppure la chiamata del cron (vedi /api/cron/tick e
- * vercel.json), così la pubblicazione e il recap partono anche senza visite.
+ * Da chiamare una volta per richiesta (layout dell'area autenticata) e dal cron.
+ * Dopo le 15:00 (fuso Europa/Roma), per ogni azienda che oggi non ha ancora avuto il
+ * suo recap: pubblica in blocco le richieste ancora in bozza e invia a ogni consigliere
+ * e membro dello staff il recap giornaliero. Le richieste create dopo le 15:00 restano
+ * in coda per domani, anche se qualcuno visita il sito nel frattempo. Trigger: la
+ * chiamata del cron (vedi /api/cron/tick e vercel.json) oppure il primo accesso dopo
+ * le 15:00, così tutto parte anche senza visite.
  */
 export const publishDueProposals = cache(async () => {
   const now = new Date();
-  const publishThreshold = zonedTodayAt(PUBLISH_HOUR, now);
-  if (now < publishThreshold) return;
+  if (now < zonedTodayAt(PUBLISH_HOUR, now)) return;
 
-  const startOfToday = zonedStartOfDayUTC(now);
-
-  // Il blocco è per organizzazione: se oggi Azienda A ha già pubblicato non deve
-  // impedire che Azienda B (che magari ha creato le sue bozze più tardi) pubblichi
-  // a sua volta la prima volta che qualcuno visita l'app dopo le 15:00 di oggi.
-  const draftOrgIds = await prisma.proposal.findMany({
-    where: { status: "DRAFT" },
-    select: { organizationId: true },
-    distinct: ["organizationId"],
+  const day = zonedDateKey(now);
+  const organizations = await prisma.organization.findMany({
+    where: { recapRuns: { none: { day } } },
+    select: { id: true },
   });
+  if (organizations.length === 0) return;
 
-  for (const { organizationId } of draftOrgIds) {
-    const alreadyPublishedToday = await prisma.proposal.count({
-      where: { organizationId, publishedAt: { gte: startOfToday } },
-    });
-    if (alreadyPublishedToday > 0) continue;
-
-    const drafts = await prisma.proposal.findMany({
-      where: { organizationId, status: "DRAFT" },
-      select: { id: true },
-    });
-    if (drafts.length === 0) continue;
-
-    // Pubblicazione atomica: se due richieste (cron e visita al sito) arrivano
-    // insieme, solo una "conquista" le bozze e invia il recap; l'altra trova zero righe.
-    const published = await prisma.proposal.updateManyAndReturn({
-      where: { id: { in: drafts.map((d) => d.id) }, status: "DRAFT" },
-      data: { status: "OPEN", publishedAt: now },
-      select: { id: true },
-    });
-    if (published.length === 0) continue;
-
-    // Un errore nell'invio del recap non deve mai annullare né bloccare la pubblicazione.
-    try {
-      await sendRecapForOrganization(
-        organizationId,
-        published.map((p) => p.id)
-      );
-    } catch (error) {
-      console.error("Invio del recap fallito:", error);
-    }
+  for (const { id } of organizations) {
+    await runDailyRecapForOrganization(id, day, now);
   }
+
+  // Pulizia: i link di accesso scaduti da oltre una settimana non servono più.
+  await prisma.magicLinkToken.deleteMany({
+    where: { expiresAt: { lt: new Date(now.getTime() - 7 * 24 * 3600_000) } },
+  });
 });

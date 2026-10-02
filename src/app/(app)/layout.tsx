@@ -21,13 +21,18 @@ async function getNavItems(member: Awaited<ReturnType<typeof requireMember>>) {
 
   if (member.role === "STAFF") {
     const assignedOpen = await prisma.staffAssignment.count({
-      where: { memberId: member.id, proposal: { status: "OPEN" } },
+      where: {
+        memberId: member.id,
+        proposal: { status: "OPEN", staffFeedback: { none: { memberId: member.id } } },
+      },
     });
     return [{ href: "/assegnate" as Route, label: "Richieste assegnate", badge: assignedOpen }];
   }
 
   const [openCount, unsignedMinutesCount] = await Promise.all([
-    prisma.proposal.count({ where: { organizationId: member.organizationId, status: "OPEN" } }),
+    prisma.proposal.count({
+      where: { organizationId: member.organizationId, status: "OPEN", votes: { none: { memberId: member.id } } },
+    }),
     member.isPresident
       ? prisma.minutes.count({ where: { organizationId: member.organizationId, signedAt: null } })
       : Promise.resolve(0),

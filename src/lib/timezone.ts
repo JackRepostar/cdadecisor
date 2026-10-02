@@ -56,3 +56,9 @@ export function zonedStartOfDayUTC(date: Date = new Date(), timeZone: string = A
 export function zonedTodayAt(hour: number, date: Date = new Date(), timeZone: string = APP_TIMEZONE): Date {
   return new Date(zonedStartOfDayUTC(date, timeZone).getTime() + hour * 3600_000);
 }
+
+/** Data di oggi nel fuso indicato, formato "2026-10-03": chiave stabile per "una volta al giorno". */
+export function zonedDateKey(date: Date = new Date(), timeZone: string = APP_TIMEZONE): string {
+  const { year, month, day } = getZonedParts(date, timeZone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}

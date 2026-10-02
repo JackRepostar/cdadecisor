@@ -14,9 +14,11 @@ type ProposalWithRelations = Proposal & {
 export function ProposalCard({
   proposal,
   myVote,
+  isNew = false,
 }: {
   proposal: ProposalWithRelations;
   myVote?: Vote;
+  isNew?: boolean;
 }) {
   const t = tally(proposal.votes);
 
@@ -45,7 +47,10 @@ export function ProposalCard({
               )}
             </div>
           </div>
-          <Pill tone="pending">In votazione</Pill>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            {isNew && <Pill tone="new">Nuova</Pill>}
+            <Pill tone="pending">In votazione</Pill>
+          </div>
         </div>
         <p className="mt-2.5 line-clamp-2 text-[13.5px] leading-relaxed text-ink-soft">
           {proposal.description}

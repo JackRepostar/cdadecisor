@@ -2,22 +2,30 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireMember, displayName } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { formatDate } from "@/lib/proposal-helpers";
+import { formatDate, isNewlyPublished, orderForMember } from "@/lib/proposal-helpers";
 import { Pill, EmptyState } from "@/components/ui";
 
 export default async function RichiesteAssegnatePage() {
   const member = await requireMember();
   if (member.role !== "STAFF") redirect("/");
 
-  const assignments = await prisma.staffAssignment.findMany({
+  const now = new Date();
+  const found = await prisma.staffAssignment.findMany({
     where: { memberId: member.id },
     include: {
       proposal: {
         include: { author: true, staffFeedback: { where: { memberId: member.id } } },
       },
     },
-    orderBy: { proposal: { createdAt: "desc" } },
   });
+  // Prima le nuove; poi quelle aperte su cui devo ancora esprimere il parere; poi le altre.
+  const assignments = orderForMember(
+    found.map((a) => ({ ...a, publishedAt: a.proposal.publishedAt, createdAt: a.proposal.createdAt })),
+    {
+      isNew: (a) => a.proposal.status === "OPEN" && isNewlyPublished(a.proposal, now),
+      needsAction: (a) => a.proposal.status === "OPEN" && a.proposal.staffFeedback.length === 0,
+    }
+  );
 
   return (
     <div className="space-y-5">
@@ -46,13 +54,18 @@ export default async function RichiesteAssegnatePage() {
                         Proposta da {displayName(proposal.author)} · {formatDate(proposal.createdAt)}
                       </div>
                     </div>
-                    {proposal.status === "OPEN" ? (
-                      <Pill tone="pending">In votazione</Pill>
-                    ) : proposal.outcome === "APPROVED" ? (
-                      <Pill tone="approved">Approvata</Pill>
-                    ) : (
-                      <Pill tone="rejected">Respinta</Pill>
-                    )}
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      {proposal.status === "OPEN" && isNewlyPublished(proposal, now) && (
+                        <Pill tone="new">Nuova</Pill>
+                      )}
+                      {proposal.status === "OPEN" ? (
+                        <Pill tone="pending">In votazione</Pill>
+                      ) : proposal.outcome === "APPROVED" ? (
+                        <Pill tone="approved">Approvata</Pill>
+                      ) : (
+                        <Pill tone="rejected">Respinta</Pill>
+                      )}
+                    </div>
                   </div>
                   <p className="mt-2.5 line-clamp-2 text-[13.5px] leading-relaxed text-ink-soft">
                     {proposal.description}

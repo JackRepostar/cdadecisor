@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { displayName } from "@/lib/member-format";
 import { isEmailSendingEnabled, sendEmails, type OutgoingEmail } from "@/lib/email-sender";
 import { createRecapLoginUrls } from "@/lib/magic-link";
+import { orderForMember } from "@/lib/proposal-helpers";
 import { APP_TIMEZONE } from "@/lib/timezone";
 
 function escapeHtml(value: string) {
@@ -47,12 +48,15 @@ function buildRecapEmailHtml(params: {
   organizationName: string;
   dateLabel: string;
   items: RecapItem[];
+  // Mostrato al posto dell'elenco quando non c'è nessuna attività da svolgere.
+  emptyMessage?: string;
   ctaUrl: string;
   ctaLabel: string;
   intro: string;
   preheader: string;
 }) {
-  const { recipientName, organizationName, dateLabel, items, ctaUrl, ctaLabel, intro, preheader } = params;
+  const { recipientName, organizationName, dateLabel, items, emptyMessage, ctaUrl, ctaLabel, intro, preheader } =
+    params;
 
   const itemsHtml = items
     .map((item) => {
@@ -71,6 +75,14 @@ function buildRecapEmailHtml(params: {
     })
     .join("");
 
+  const emptyHtml =
+    items.length === 0 && emptyMessage
+      ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px;background:#F7F5EF;border-left:4px solid #2F7D5A;border-radius:6px;"><tr><td style="padding:16px;">
+      <div style="font:700 15px/1.35 ${SERIF};color:#1C1F26;">Nessuna attività da svolgere</div>
+      <div style="font:13px/1.55 ${SANS};color:#4A5164;margin-top:6px;">${escapeHtml(emptyMessage)}</div>
+    </td></tr></table>`
+      : "";
+
   return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
 <style>@media only screen and (max-width:480px){.px{padding-left:20px!important;padding-right:20px!important}}</style></head>
 <body style="margin:0;padding:0;background:#F1EEE4;">
@@ -85,7 +97,7 @@ function buildRecapEmailHtml(params: {
   <tr><td class="px" style="padding:28px 32px 6px;">
     <p style="font:14px ${SERIF};color:#1C1F26;margin:0 0 12px;">Gentile ${escapeHtml(recipientName)},</p>
     <p style="font:13.5px/1.6 ${SANS};color:#4A5164;margin:0 0 18px;">${escapeHtml(intro)}</p>
-    ${itemsHtml}
+    ${itemsHtml}${emptyHtml}
   </td></tr>
   <tr><td class="px" style="padding:14px 32px 30px;">
     <table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td bgcolor="#1B2A41" align="center" style="border-radius:8px;">
@@ -93,31 +105,33 @@ function buildRecapEmailHtml(params: {
     </td></tr></table>
   </td></tr>
   <tr><td class="px" style="padding:16px 32px 26px;border-top:1px solid #EFEBDD;">
-    <div style="font:11px/1.6 ${SANS};color:#9A9382;">Notifica automatica di CdaDecisor, inviata una volta al giorno alla pubblicazione delle richieste. Il pulsante ti fa accedere direttamente, una sola volta e per 24 ore: non inoltrare questa email.</div>
+    <div style="font:11px/1.6 ${SANS};color:#9A9382;">Notifica automatica di CdaDecisor, inviata ogni giorno alle 15:00. Il pulsante ti fa accedere direttamente, una sola volta e per 24 ore: non inoltrare questa email.</div>
   </td></tr>
 </table></td></tr></table></body></html>`;
 }
 
 /**
- * Invia a ogni destinatario UN SOLO recap con tutte le richieste che attendono il
- * suo intervento, subito dopo la pubblicazione giornaliera. Consiglieri: richieste
- * aperte su cui non hanno ancora votato (compresa una propria: la richiesta si
- * chiude solo quando votano tutti). Staff: richieste aperte a cui sono assegnati e
- * su cui non hanno ancora lasciato un parere. Chi non ha nulla di nuovo da fare
- * oggi non riceve nulla.
+ * Invia a OGNI destinatario, ogni giorno, UN SOLO messaggio.
+ *  - Consiglieri: tutte le richieste aperte su cui non hanno ancora votato (compresa
+ *    una propria: la richiesta si chiude solo quando votano tutti).
+ *  - Staff: le richieste aperte a cui sono assegnati e su cui non hanno ancora
+ *    lasciato un parere. Lo staff mai coinvolto in nessuna richiesta non riceve nulla.
+ * Le richieste restano nell'elenco ogni giorno finché non vengono votate; le nuove
+ * (pubblicate in questa esecuzione) vengono per prime. Chi non ha più nulla da fare
+ * riceve comunque un messaggio che lo dice, sempre con il link per entrare.
  *
  * Il pulsante porta alla home già autenticato (link personale monouso). Quel link
  * è una credenziale: nell'archivio consultabile dall'amministratore ("Vedi l'email
- * inviata") viene salvata una copia con il link normale alla piattaforma.
+ * inviata") viene salvata una copia con il link normale alla piattaforma, solo per
+ * le richieste nuove di questa esecuzione.
  */
 export async function sendRecapForOrganization(organizationId: string, newProposalIds: string[]) {
   const newIds = new Set(newProposalIds);
 
-  const [organization, openProposals, recipients] = await Promise.all([
+  const [organization, openProposals, members, assignedStaff] = await Promise.all([
     prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } }),
     prisma.proposal.findMany({
       where: { organizationId, status: "OPEN" },
-      orderBy: { createdAt: "asc" },
       include: {
         author: true,
         attachments: { select: { id: true } },
@@ -129,30 +143,24 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
     prisma.member.findMany({
       where: { organizationId, role: { in: ["BOARD", "STAFF"] }, status: "VERIFIED", deletedAt: null },
     }),
+    prisma.staffAssignment.findMany({
+      where: { proposal: { organizationId } },
+      select: { memberId: true },
+      distinct: ["memberId"],
+    }),
   ]);
+
+  const staffEverAssigned = new Set(assignedStaff.map((a) => a.memberId));
+  const recipients = members.filter((m) => m.role === "BOARD" || staffEverAssigned.has(m.id));
+  if (recipients.length === 0) return { recipients: 0, sent: 0, failed: 0, firstError: null as string | null };
 
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
   const now = new Date();
-
-  const plans = recipients
-    .map((member) => {
-      const pending = openProposals.filter((p) =>
-        member.role === "BOARD"
-          ? !p.votes.some((v) => v.memberId === member.id)
-          : p.staffAssignments.some((a) => a.memberId === member.id) &&
-            !p.staffFeedback.some((f) => f.memberId === member.id)
-      );
-      // Nuove di oggi per prime, poi quelle ancora aperte dai giorni scorsi.
-      pending.sort((a, b) => Number(newIds.has(b.id)) - Number(newIds.has(a.id)));
-      return { member, pending };
-    })
-    .filter(({ pending }) => pending.some((p) => newIds.has(p.id)));
-
-  if (plans.length === 0) return { recipients: 0, sent: 0, failed: 0 };
+  const dateLabel = formatLongDate(now);
 
   const sendingEnabled = isEmailSendingEnabled();
   const loginUrls = sendingEnabled
-    ? await createRecapLoginUrls(plans.map((p) => p.member.id))
+    ? await createRecapLoginUrls(recipients.map((m) => m.id))
     : new Map<string, string>();
 
   const messages: OutgoingEmail[] = [];
@@ -164,8 +172,18 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
     htmlBody: string;
   }[] = [];
 
-  for (const { member, pending } of plans) {
+  for (const member of recipients) {
     const isBoard = member.role === "BOARD";
+    const pending = orderForMember(
+      openProposals.filter((p) =>
+        isBoard
+          ? !p.votes.some((v) => v.memberId === member.id)
+          : p.staffAssignments.some((a) => a.memberId === member.id) &&
+            !p.staffFeedback.some((f) => f.memberId === member.id)
+      ),
+      { isNew: (p) => newIds.has(p.id) }
+    );
+
     const items: RecapItem[] = pending.map((p) => ({
       title: p.title,
       description: p.description,
@@ -175,24 +193,51 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
       isNew: newIds.has(p.id),
     }));
     const count = items.length;
-    const subject = isBoard
-      ? `${count === 1 ? "1 richiesta in attesa" : `${count} richieste in attesa`} del tuo voto — CdaDecisor`
-      : `${count === 1 ? "1 richiesta" : `${count} richieste`} per cui è richiesto il tuo parere — CdaDecisor`;
     const newCount = items.filter((i) => i.isNew).length;
     const todayNote =
       newCount === 0 ? "" : newCount === 1 ? " Una è stata pubblicata oggi." : ` ${newCount} sono state pubblicate oggi.`;
+
+    let subject: string;
+    let content: Pick<Parameters<typeof buildRecapEmailHtml>[0], "intro" | "preheader" | "ctaLabel" | "emptyMessage">;
+
+    if (count > 0) {
+      subject = isBoard
+        ? `${count === 1 ? "1 richiesta in attesa" : `${count} richieste in attesa`} del tuo voto — CdaDecisor`
+        : `${count === 1 ? "1 richiesta" : `${count} richieste`} per cui è richiesto il tuo parere — CdaDecisor`;
+      content = {
+        ctaLabel: isBoard ? "Vota" : "Esprimi il tuo parere",
+        intro: isBoard
+          ? `Queste sono le richieste del Consiglio che attendono il tuo voto.${todayNote}`
+          : `Queste sono le richieste del Consiglio per cui è richiesto il tuo parere consultivo, che non è vincolante.${todayNote}`,
+        preheader: isBoard
+          ? `${newCount ? `${newCount} ${plural(newCount, "nuova", "nuove")} oggi. ` : ""}Apri CdaDecisor per votare.`
+          : "Apri CdaDecisor per lasciare il tuo parere.",
+      };
+    } else {
+      const hadSomethingToDo = isBoard
+        ? openProposals.length > 0
+        : openProposals.some((p) => p.staffAssignments.some((a) => a.memberId === member.id));
+      subject = "Nessuna attività da svolgere — CdaDecisor";
+      content = {
+        ctaLabel: "Apri CdaDecisor",
+        intro: "Ecco il riepilogo di oggi.",
+        preheader: hadSomethingToDo ? "Hai completato tutte le attività." : "Nessuna attività in attesa.",
+        emptyMessage: isBoard
+          ? hadSomethingToDo
+            ? "Hai già votato tutte le richieste aperte: al momento non c'è nulla da fare."
+            : "Al momento non ci sono richieste aperte al voto."
+          : hadSomethingToDo
+            ? "Hai già espresso il tuo parere su tutte le richieste che ti sono state assegnate: al momento non c'è nulla da fare."
+            : "Al momento non ci sono richieste su cui esprimere un parere.",
+      };
+    }
+
     const common = {
       recipientName: displayName(member),
       organizationName: organization.name,
-      dateLabel: formatLongDate(now),
+      dateLabel,
       items,
-      ctaLabel: isBoard ? "Vota" : "Esprimi il tuo parere",
-      intro: isBoard
-        ? `Queste sono le richieste del Consiglio che attendono il tuo voto.${todayNote}`
-        : `Queste sono le richieste del Consiglio per cui è richiesto il tuo parere consultivo, che non è vincolante.${todayNote}`,
-      preheader: isBoard
-        ? `${newCount ? `${newCount} ${plural(newCount, "nuova", "nuove")} oggi. ` : ""}Apri CdaDecisor per votare.`
-        : "Apri CdaDecisor per lasciare il tuo parere.",
+      ...content,
     };
 
     // Copia archiviata: senza il link personale di accesso.
@@ -219,13 +264,18 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
     }
   }
 
-  await prisma.emailNotification.createMany({ data: archive });
+  if (archive.length > 0) await prisma.emailNotification.createMany({ data: archive });
 
-  if (messages.length === 0) return { recipients: plans.length, sent: 0, failed: 0 };
+  if (messages.length === 0) return { recipients: recipients.length, sent: 0, failed: 0, firstError: null as string | null };
 
   const { sent, failed } = await sendEmails(messages);
   for (const failure of failed) {
     console.error(`Recap non consegnato a ${failure.to}: ${failure.error}`);
   }
-  return { recipients: plans.length, sent, failed: failed.length };
+  return {
+    recipients: recipients.length,
+    sent,
+    failed: failed.length,
+    firstError: failed[0] ? failed[0].error.slice(0, 300) : (null as string | null),
+  };
 }

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireMember } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { describeNextPublish } from "@/lib/publish";
+import { isNewlyPublished, orderForMember } from "@/lib/proposal-helpers";
 import { ProposalCard } from "@/components/proposal-card";
 import { EmptyState, Callout } from "@/components/ui";
 
@@ -13,10 +14,15 @@ export default async function RichiesteAperteBoardPage({ searchParams }: PagePro
   const params = await searchParams;
   const justCreated = params.inviata === "1";
 
-  const proposals = await prisma.proposal.findMany({
+  const now = new Date();
+  const openProposals = await prisma.proposal.findMany({
     where: { organizationId: member.organizationId, status: "OPEN" },
     include: { author: true, votes: true, attachments: true, staffAssignments: true },
-    orderBy: { createdAt: "desc" },
+  });
+  // Prima le nuove; poi quelle su cui devo ancora votare; poi le altre, le più recenti per prime.
+  const proposals = orderForMember(openProposals, {
+    isNew: (p) => isNewlyPublished(p, now),
+    needsAction: (p) => !p.votes.some((v) => v.memberId === member.id),
   });
 
   return (
@@ -44,6 +50,7 @@ export default async function RichiesteAperteBoardPage({ searchParams }: PagePro
               key={p.id}
               proposal={p}
               myVote={p.votes.find((v) => v.memberId === member.id)}
+              isNew={isNewlyPublished(p, now)}
             />
           ))}
         </div>

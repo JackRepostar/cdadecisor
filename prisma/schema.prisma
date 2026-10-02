@@ -79,6 +79,7 @@ model Organization {
   proposals     Proposal[]
   minutesList   Minutes[]
   accessGrants  AccessGrant[]
+  recapRuns     RecapRun[]
 }
 
 model Member {
@@ -322,4 +323,24 @@ model AccessGrant {
   createdAt      DateTime      @default(now())
 
   @@index([organizationId])
+}
+
+// Una riga per azienda e per giorno: dimostra che il recap delle 15:00 di quel giorno è
+// già partito (la chiave unica impedisce invii doppi anche con cron e visite
+// simultanee) e ne conserva l'esito, utile per controllare cosa è successo.
+model RecapRun {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  // Giorno nel fuso Europa/Roma, formato "2026-10-03".
+  day            String
+  createdAt      DateTime     @default(now())
+  published      Int          @default(0)
+  recipients     Int          @default(0)
+  sent           Int          @default(0)
+  failed         Int          @default(0)
+  error          String?
+
+  @@unique([organizationId, day])
+  @@index([day])
 }
