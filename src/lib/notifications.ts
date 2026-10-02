@@ -26,51 +26,74 @@ function formatShortDate(date: Date) {
   return new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "short", timeZone: APP_TIMEZONE }).format(date);
 }
 
+function formatLongDate(date: Date) {
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: APP_TIMEZONE,
+  }).format(date);
+}
+
+const SERIF = "Georgia,'Times New Roman',serif";
+const SANS = "Arial,Helvetica,sans-serif";
+
+function plural(count: number, singular: string, pluralForm: string) {
+  return count === 1 ? singular : pluralForm;
+}
+
 function buildRecapEmailHtml(params: {
   recipientName: string;
   organizationName: string;
+  dateLabel: string;
   items: RecapItem[];
   ctaUrl: string;
   ctaLabel: string;
   intro: string;
+  preheader: string;
 }) {
-  const { recipientName, organizationName, items, ctaUrl, ctaLabel, intro } = params;
+  const { recipientName, organizationName, dateLabel, items, ctaUrl, ctaLabel, intro, preheader } = params;
 
   const itemsHtml = items
     .map((item) => {
       const excerpt = item.description.length > 180 ? `${item.description.slice(0, 180)}…` : item.description;
       const badge = item.isNew
-        ? `<span style="display:inline-block;background:#B8912F;color:#ffffff;font-family:Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:middle;">Nuova</span>`
+        ? `<span style="display:inline-block;background:#B8912F;color:#ffffff;font:700 10px ${SANS};letter-spacing:.06em;text-transform:uppercase;border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:middle;">Nuova</span>`
         : "";
       const attachments = item.attachmentCount
-        ? ` · 📎 ${item.attachmentCount} ${item.attachmentCount === 1 ? "allegato" : "allegati"}`
+        ? ` · ${item.attachmentCount} ${plural(item.attachmentCount, "allegato", "allegati")}`
         : "";
-      return `<div style="background:#F7F5EF;border-left:4px solid ${item.isNew ? "#B8912F" : "#C9C3B0"};border-radius:6px;padding:14px 16px;margin-bottom:10px;">
-      <div style="font-size:15px;font-weight:700;color:#1C1F26;font-family:Georgia,serif;">${escapeHtml(item.title)}${badge}</div>
-      <div style="font-size:11.5px;color:#8b8471;margin:3px 0 7px;font-family:Arial,sans-serif;">Proposta da ${escapeHtml(item.authorName)} · ${formatShortDate(item.createdAt)}${attachments}</div>
-      <div style="font-size:13px;color:#4A5164;line-height:1.55;font-family:Arial,sans-serif;">${escapeHtml(excerpt)}</div>
-    </div>`;
+      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px;background:#F7F5EF;border-left:4px solid ${item.isNew ? "#B8912F" : "#C9C3B0"};border-radius:6px;"><tr><td style="padding:14px 16px;">
+      <div style="font:700 15px/1.35 ${SERIF};color:#1C1F26;">${escapeHtml(item.title)}${badge}</div>
+      <div style="font:12px/1.4 ${SANS};color:#8B8471;margin:4px 0 8px;">Proposta da ${escapeHtml(item.authorName)} · ${formatShortDate(item.createdAt)}${attachments}</div>
+      <div style="font:13px/1.55 ${SANS};color:#4A5164;">${escapeHtml(excerpt)}</div>
+    </td></tr></table>`;
     })
     .join("");
 
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#F1EEE4;font-family:Georgia,'Times New Roman',serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1EEE4;padding:24px 0;">
-<tr><td align="center">
-<table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;max-width:100%;">
-  <tr><td style="background:linear-gradient(135deg,#1B2A41,#2C4160);padding:26px 32px;">
-    <div style="color:#F1E6C8;font-size:11px;letter-spacing:.16em;text-transform:uppercase;font-family:Arial,sans-serif;">CdaDecisor · ${escapeHtml(organizationName)}</div>
-    <div style="color:#ffffff;font-size:19px;font-weight:700;margin-top:6px;font-family:Georgia,serif;">Recap delle richieste</div>
+  return `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+<style>@media only screen and (max-width:480px){.px{padding-left:20px!important;padding-right:20px!important}}</style></head>
+<body style="margin:0;padding:0;background:#F1EEE4;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;">${escapeHtml(preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1EEE4;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;">
+  <tr><td class="px" style="background-color:#1B2A41;background-image:linear-gradient(135deg,#1B2A41,#2C4160);padding:26px 32px;">
+    <div style="color:#F1E6C8;font:11px ${SANS};letter-spacing:.16em;text-transform:uppercase;">CdaDecisor · ${escapeHtml(organizationName)}</div>
+    <div style="color:#ffffff;font:700 21px ${SERIF};margin-top:6px;">Recap delle richieste</div>
+    <div style="color:#C9D2DE;font:12px ${SANS};margin-top:4px;">${escapeHtml(dateLabel)}</div>
   </td></tr>
-  <tr><td style="padding:28px 32px 6px;">
-    <p style="font-size:14px;color:#1C1F26;margin:0 0 12px;font-family:Georgia,serif;">Gentile ${escapeHtml(recipientName)},</p>
-    <p style="font-size:13.5px;color:#4A5164;line-height:1.6;margin:0 0 18px;font-family:Arial,sans-serif;">${escapeHtml(intro)}</p>
+  <tr><td class="px" style="padding:28px 32px 6px;">
+    <p style="font:14px ${SERIF};color:#1C1F26;margin:0 0 12px;">Gentile ${escapeHtml(recipientName)},</p>
+    <p style="font:13.5px/1.6 ${SANS};color:#4A5164;margin:0 0 18px;">${escapeHtml(intro)}</p>
     ${itemsHtml}
   </td></tr>
-  <tr><td style="padding:14px 32px 30px;text-align:center;">
-    <a href="${ctaUrl}" style="display:inline-block;background:#1B2A41;color:#F1E6C8;font-family:Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:14px 38px;border-radius:8px;">${escapeHtml(ctaLabel)} →</a>
+  <tr><td class="px" style="padding:14px 32px 30px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" align="center"><tr><td bgcolor="#1B2A41" align="center" style="border-radius:8px;">
+      <a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:14px 40px;color:#F1E6C8;font:700 15px ${SANS};text-decoration:none;letter-spacing:.01em;">${escapeHtml(ctaLabel)} →</a>
+    </td></tr></table>
   </td></tr>
-  <tr><td style="padding:16px 32px 28px;border-top:1px solid #EFEBDD;">
-    <div style="font-size:11px;color:#9A9382;font-family:Arial,sans-serif;line-height:1.6;">Notifica automatica di CdaDecisor, inviata una volta al giorno alla pubblicazione delle richieste. Il pulsante ti fa accedere direttamente, una sola volta e per 24 ore: non inoltrare questa email.</div>
+  <tr><td class="px" style="padding:16px 32px 26px;border-top:1px solid #EFEBDD;">
+    <div style="font:11px/1.6 ${SANS};color:#9A9382;">Notifica automatica di CdaDecisor, inviata una volta al giorno alla pubblicazione delle richieste. Il pulsante ti fa accedere direttamente, una sola volta e per 24 ore: non inoltrare questa email.</div>
   </td></tr>
 </table></td></tr></table></body></html>`;
 }
@@ -109,6 +132,7 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
   ]);
 
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  const now = new Date();
 
   const plans = recipients
     .map((member) => {
@@ -154,14 +178,21 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
     const subject = isBoard
       ? `${count === 1 ? "1 richiesta in attesa" : `${count} richieste in attesa`} del tuo voto — CdaDecisor`
       : `${count === 1 ? "1 richiesta" : `${count} richieste`} per cui è richiesto il tuo parere — CdaDecisor`;
+    const newCount = items.filter((i) => i.isNew).length;
+    const todayNote =
+      newCount === 0 ? "" : newCount === 1 ? " Una è stata pubblicata oggi." : ` ${newCount} sono state pubblicate oggi.`;
     const common = {
       recipientName: displayName(member),
       organizationName: organization.name,
+      dateLabel: formatLongDate(now),
       items,
       ctaLabel: isBoard ? "Vota" : "Esprimi il tuo parere",
       intro: isBoard
-        ? "Queste sono le richieste del Consiglio che attendono il tuo voto. Quelle contrassegnate come nuove sono state pubblicate oggi."
-        : "Queste sono le richieste del Consiglio per cui è richiesto il tuo parere consultivo. Quelle contrassegnate come nuove sono state pubblicate oggi.",
+        ? `Queste sono le richieste del Consiglio che attendono il tuo voto.${todayNote}`
+        : `Queste sono le richieste del Consiglio per cui è richiesto il tuo parere consultivo, che non è vincolante.${todayNote}`,
+      preheader: isBoard
+        ? `${newCount ? `${newCount} ${plural(newCount, "nuova", "nuove")} oggi. ` : ""}Apri CdaDecisor per votare.`
+        : "Apri CdaDecisor per lasciare il tuo parere.",
     };
 
     // Copia archiviata: senza il link personale di accesso.
