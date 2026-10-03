@@ -6,9 +6,10 @@ import { humanFileSize } from "@/lib/proposal-helpers";
 import type { MinutesSnapshot } from "@/lib/minutes";
 import { Pill, Callout, GhostButton } from "@/components/ui";
 import { SignMinutesForm } from "./sign-minutes-form";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 function formatItDate(iso: string) {
-  return new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric" }).format(
+  return new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, day: "numeric", month: "long", year: "numeric" }).format(
     new Date(iso)
   );
 }
@@ -32,8 +33,8 @@ export default async function VerbaleDetailPage({ params }: PageProps<"/verbali/
 
       <div>
         <div className="mb-1.5 text-xs text-ink-soft">
-          Periodo dal {new Intl.DateTimeFormat("it-IT", { dateStyle: "long" }).format(minutes.periodStart)}{" "}
-          al {new Intl.DateTimeFormat("it-IT", { dateStyle: "long" }).format(minutes.periodEnd)}
+          Periodo dal {new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, dateStyle: "long" }).format(minutes.periodStart)}{" "}
+          al {new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, dateStyle: "long" }).format(minutes.periodEnd)}
         </div>
         <h1 className="font-display text-[22px] font-semibold">Verbale del Consiglio di Amministrazione</h1>
         <div className="mt-2 flex items-center gap-2">
@@ -62,7 +63,7 @@ export default async function VerbaleDetailPage({ params }: PageProps<"/verbali/
       {minutes.signedAt ? (
         <Callout tone="gold" title="Verbale firmato">
           Firmato da {minutes.signedBy ? displayName(minutes.signedBy) : "—"} il{" "}
-          {new Intl.DateTimeFormat("it-IT", { dateStyle: "long", timeStyle: "short" }).format(minutes.signedAt)}
+          {new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, dateStyle: "long", timeStyle: "short" }).format(minutes.signedAt)}
           . Firma elettronica in modalità dimostrativa: non ha ancora valore legale equivalente
           alla sottoscrizione autografa.
         </Callout>

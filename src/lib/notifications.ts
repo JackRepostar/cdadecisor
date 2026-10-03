@@ -105,7 +105,7 @@ function buildRecapEmailHtml(params: {
     </td></tr></table>
   </td></tr>
   <tr><td class="px" style="padding:16px 32px 26px;border-top:1px solid #EFEBDD;">
-    <div style="font:11px/1.6 ${SANS};color:#9A9382;">Notifica automatica di CdaDecisor, inviata ogni giorno alle 15:00. Il pulsante ti fa accedere direttamente, una sola volta e per 24 ore: non inoltrare questa email.</div>
+    <div style="font:11px/1.6 ${SANS};color:#9A9382;">Notifica automatica di CdaDecisor, inviata nei giorni lavorativi alle 15:00. Il pulsante ti fa accedere direttamente, una sola volta e per 24 ore: non inoltrare questa email.</div>
   </td></tr>
 </table></td></tr></table></body></html>`;
 }

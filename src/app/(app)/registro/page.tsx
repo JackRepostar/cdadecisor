@@ -80,7 +80,7 @@ export default async function RegistroPage({ searchParams }: PageProps<"/registr
 
       {justCreated && (
         <Callout tone="gold" title="Richiesta registrata">
-          Sarà resa visibile al Consiglio insieme alle altre richieste della giornata{" "}
+          Sarà resa visibile al Consiglio insieme alle altre richieste raccolte,{" "}
           {describeNextPublish()}.
         </Callout>
       )}

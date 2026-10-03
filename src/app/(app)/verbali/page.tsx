@@ -4,9 +4,10 @@ import { requireMember } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { EmptyState, Pill } from "@/components/ui";
 import type { MinutesSnapshot } from "@/lib/minutes";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 function formatRange(start: Date, end: Date) {
-  const fmt = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "short", year: "numeric" });
+  const fmt = new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", year: "numeric" });
   return `${fmt.format(start)} — ${fmt.format(end)}`;
 }
 

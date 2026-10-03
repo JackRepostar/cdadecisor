@@ -1,4 +1,5 @@
 import type { Vote } from "@prisma/client";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 export function tally(votes: Pick<Vote, "choice">[]) {
   const yes = votes.filter((v) => v.choice === "YES").length;
@@ -7,7 +8,7 @@ export function tally(votes: Pick<Vote, "choice">[]) {
 }
 
 export function formatDate(date: Date) {
-  return new Intl.DateTimeFormat("it-IT", {
+  return new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE,
     day: "numeric",
     month: "short",
     year: "numeric",

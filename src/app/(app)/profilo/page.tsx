@@ -1,6 +1,7 @@
 import { requireMember, displayName } from "@/lib/auth";
 import { Avatar, Pill, Callout, PrimaryButton, GhostButton } from "@/components/ui";
 import { connectSignatureAction, disconnectSignatureAction } from "./actions";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 const ROLE_LABEL: Record<string, string> = {
   ADMIN: "Amministratore",
@@ -50,7 +51,7 @@ export default async function ProfiloPage() {
             <>
               <Callout tone="gold" title="Firma collegata (modalità dimostrativa)">
                 Provider: <b>{member.signatureProvider}</b> · collegata il{" "}
-                {new Intl.DateTimeFormat("it-IT", { dateStyle: "long", timeStyle: "short" }).format(
+                {new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, dateStyle: "long", timeStyle: "short" }).format(
                   member.signatureConnectedAt
                 )}
                 .

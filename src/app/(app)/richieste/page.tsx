@@ -36,7 +36,7 @@ export default async function RichiesteAperteBoardPage({ searchParams }: PagePro
 
       {justCreated && (
         <Callout tone="gold" title="Richiesta registrata">
-          Sarà resa visibile al Consiglio insieme alle altre richieste della giornata{" "}
+          Sarà resa visibile al Consiglio insieme alle altre richieste raccolte,{" "}
           {describeNextPublish()}.
         </Callout>
       )}

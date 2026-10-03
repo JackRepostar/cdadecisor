@@ -3,12 +3,13 @@ import { Document, Page, View, Text, StyleSheet, renderToBuffer } from "@react-p
 import type { Minutes, Organization } from "@prisma/client";
 import type { MinutesSnapshot } from "@/lib/minutes";
 import { humanFileSize } from "@/lib/proposal-helpers";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 function formatDateLong(date: Date) {
-  return new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric" }).format(date);
+  return new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, day: "numeric", month: "long", year: "numeric" }).format(date);
 }
 function formatDateTime(date: Date) {
-  return new Intl.DateTimeFormat("it-IT", { dateStyle: "long", timeStyle: "short" }).format(date);
+  return new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, dateStyle: "long", timeStyle: "short" }).format(date);
 }
 
 const styles = StyleSheet.create({

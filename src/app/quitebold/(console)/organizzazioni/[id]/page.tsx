@@ -10,9 +10,10 @@ import {
 import { Pill, EmptyState, GhostButton } from "@/components/ui";
 import { GrantForm } from "./grant-form";
 import { revokeAccessGrantAction } from "./actions";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 function fmtDate(date: Date) {
-  return new Intl.DateTimeFormat("it-IT", { dateStyle: "long" }).format(date);
+  return new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, dateStyle: "long" }).format(date);
 }
 
 export default async function OrganizationDetailPage({

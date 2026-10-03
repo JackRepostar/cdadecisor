@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { displayName } from "@/lib/member-format";
 import { humanFileSize } from "@/lib/proposal-helpers";
 import { isEmailSendingEnabled, sendEmail } from "@/lib/email-sender";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 const PERIOD_DAYS = 30;
 
@@ -36,9 +37,9 @@ export type MinutesSnapshot = {
 };
 
 function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
+  // Aritmetica in millisecondi, non sul calendario locale: così il risultato non
+  // dipende dal fuso del processo (il server di produzione gira in UTC).
+  return new Date(date.getTime() + days * 24 * 3600_000);
 }
 
 function escapeHtml(value: string) {
@@ -50,7 +51,7 @@ function escapeHtml(value: string) {
 }
 
 function formatItDate(iso: string) {
-  return new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric" }).format(
+  return new Intl.DateTimeFormat("it-IT", { timeZone: APP_TIMEZONE, day: "numeric", month: "long", year: "numeric" }).format(
     new Date(iso)
   );
 }

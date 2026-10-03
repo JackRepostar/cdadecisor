@@ -4,19 +4,33 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendRecapForOrganization } from "@/lib/notifications";
 import { zonedTodayAt, zonedDateKey } from "@/lib/timezone";
+import { addCivilDays, civilDateOf, isWorkingCivilDate, isWorkingDay } from "@/lib/calendar-it";
 
 // Ora locale (fuso Europa/Roma, non quello del server) dopo la quale le richieste
 // accumulate nella giornata vengono pubblicate tutte insieme al Consiglio (non in
 // tempo reale) e parte il recap giornaliero.
 const PUBLISH_HOUR = 15;
 
-/** Testo da mostrare a chi ha appena creato una richiesta: quando diventerà visibile. */
+/**
+ * Testo da mostrare a chi ha appena creato una richiesta: quando diventerà visibile.
+ * Il sabato, la domenica e i festivi non si pubblica: si indica il prossimo giorno
+ * lavorativo (es. "lunedì 5 ottobre alle 15:00").
+ */
 export function describeNextPublish(now: Date = new Date()) {
-  const todayAt15 = zonedTodayAt(PUBLISH_HOUR, now);
-  const isToday = now < todayAt15;
-  return isToday
-    ? `oggi alle ${PUBLISH_HOUR}:00`
-    : `domani alle ${PUBLISH_HOUR}:00`;
+  const today = civilDateOf(now);
+  let offset = isWorkingCivilDate(today) && now < zonedTodayAt(PUBLISH_HOUR, now) ? 0 : 1;
+  while (offset < 30 && !isWorkingCivilDate(addCivilDays(today, offset))) offset += 1;
+
+  if (offset === 0) return `oggi alle ${PUBLISH_HOUR}:00`;
+  if (offset === 1) return `domani alle ${PUBLISH_HOUR}:00`;
+  const target = addCivilDays(today, offset);
+  const label = new Intl.DateTimeFormat("it-IT", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(target.year, target.month - 1, target.day)));
+  return `${label} alle ${PUBLISH_HOUR}:00`;
 }
 
 async function runDailyRecapForOrganization(organizationId: string, day: string, now: Date) {
@@ -75,8 +89,8 @@ async function runDailyRecapForOrganization(organizationId: string, day: string,
 
 /**
  * Da chiamare una volta per richiesta (layout dell'area autenticata) e dal cron.
- * Dopo le 15:00 (fuso Europa/Roma), per ogni azienda che oggi non ha ancora avuto il
- * suo recap: pubblica in blocco le richieste ancora in bozza e invia a ogni consigliere
+ * Nei giorni lavorativi, dopo le 15:00 (fuso Europa/Roma), per ogni azienda che oggi
+ * non ha ancora avuto il suo recap: pubblica in blocco le richieste ancora in bozza e invia a ogni consigliere
  * e membro dello staff il recap giornaliero. Le richieste create dopo le 15:00 restano
  * in coda per domani, anche se qualcuno visita il sito nel frattempo. Trigger: la
  * chiamata del cron (vedi /api/cron/tick e vercel.json) oppure il primo accesso dopo
@@ -84,6 +98,9 @@ async function runDailyRecapForOrganization(organizationId: string, day: string,
  */
 export const publishDueProposals = cache(async () => {
   const now = new Date();
+  // Sabato, domenica e festivi non si pubblica e non si invia nulla: le richieste
+  // restano in coda per il primo giorno lavorativo successivo.
+  if (!isWorkingDay(now)) return;
   if (now < zonedTodayAt(PUBLISH_HOUR, now)) return;
 
   const day = zonedDateKey(now);

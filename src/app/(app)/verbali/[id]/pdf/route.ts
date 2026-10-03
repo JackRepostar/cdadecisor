@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentMember, displayName } from "@/lib/auth";
 import { renderMinutesPdf } from "@/lib/minutes-pdf";
 import type { MinutesSnapshot } from "@/lib/minutes";
+import { zonedDateKey } from "@/lib/timezone";
 
 export async function GET(
   _request: Request,
@@ -39,7 +40,7 @@ export async function GET(
     currentBoardMembers: currentBoardMembers.map((m) => ({ name: displayName(m), jobTitle: m.jobTitle })),
   });
 
-  const filename = `verbale-cda-${minutesNumber}-${minutes.periodEnd.toISOString().slice(0, 10)}.pdf`;
+  const filename = `verbale-cda-${minutesNumber}-${zonedDateKey(minutes.periodEnd)}.pdf`;
 
   return new NextResponse(new Uint8Array(pdfBuffer), {
     headers: {

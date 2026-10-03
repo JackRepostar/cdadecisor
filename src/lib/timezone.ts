@@ -1,13 +1,14 @@
 import "server-only";
+import { APP_TIMEZONE } from "@/lib/app-timezone";
 
 // I server di produzione (es. le funzioni serverless di Vercel) girano in UTC, non
 // nel fuso orario italiano: usare Date.setHours()/getHours() per ragionare su "le
 // 15:00" è quindi un bug che si manifesta solo in produzione. Questo modulo calcola
 // data/ora usando esplicitamente il fuso dell'azienda, indipendentemente da dove
 // gira il processo Node.
-export const APP_TIMEZONE = "Europe/Rome";
+export { APP_TIMEZONE };
 
-function getZonedParts(date: Date, timeZone: string) {
+export function zonedParts(date: Date, timeZone: string = APP_TIMEZONE) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
@@ -32,33 +33,46 @@ function getZonedParts(date: Date, timeZone: string) {
   };
 }
 
+/**
+ * Istante UTC in cui l'orologio del fuso indicato segna esattamente ora:00 del giorno
+ * (anno, mese, giorno). Corregge l'offset due volte, così è giusto anche nei due giorni
+ * dell'anno in cui cambia l'ora legale (di 23 o 25 ore).
+ */
+export function zonedWallTimeToUTC(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  timeZone: string = APP_TIMEZONE
+): Date {
+  const target = Date.UTC(year, month - 1, day, hour);
+  let utc = target;
+  for (let i = 0; i < 2; i += 1) {
+    const p = zonedParts(new Date(utc), timeZone);
+    utc -= Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - target;
+  }
+  return new Date(utc);
+}
+
 /** L'ora corrente (0-23) nel fuso orario dell'app, a prescindere dal fuso del server. */
 export function getZonedHour(date: Date = new Date(), timeZone: string = APP_TIMEZONE): number {
-  return getZonedParts(date, timeZone).hour;
+  return zonedParts(date, timeZone).hour;
 }
 
-/**
- * Istante UTC corrispondente alla mezzanotte di oggi nel fuso indicato. Corregge
- * l'offset per iterazione: robusto per fusi con transizioni DST su ore intere
- * (incluso Europe/Rome).
- */
+/** Istante UTC corrispondente alla mezzanotte del giorno di `date` nel fuso indicato. */
 export function zonedStartOfDayUTC(date: Date = new Date(), timeZone: string = APP_TIMEZONE): Date {
-  const { year, month, day } = getZonedParts(date, timeZone);
-  let guess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-  const offsetHours = getZonedParts(guess, timeZone).hour;
-  if (offsetHours !== 0) {
-    guess = new Date(guess.getTime() - offsetHours * 3600_000);
-  }
-  return guess;
+  const { year, month, day } = zonedParts(date, timeZone);
+  return zonedWallTimeToUTC(year, month, day, 0, timeZone);
 }
 
-/** Istante UTC corrispondente alle `hour`:00 di oggi (data di `date`) nel fuso indicato. */
+/** Istante UTC corrispondente alle `hour`:00 del giorno di `date` nel fuso indicato. */
 export function zonedTodayAt(hour: number, date: Date = new Date(), timeZone: string = APP_TIMEZONE): Date {
-  return new Date(zonedStartOfDayUTC(date, timeZone).getTime() + hour * 3600_000);
+  const { year, month, day } = zonedParts(date, timeZone);
+  return zonedWallTimeToUTC(year, month, day, hour, timeZone);
 }
 
 /** Data di oggi nel fuso indicato, formato "2026-10-03": chiave stabile per "una volta al giorno". */
 export function zonedDateKey(date: Date = new Date(), timeZone: string = APP_TIMEZONE): string {
-  const { year, month, day } = getZonedParts(date, timeZone);
+  const { year, month, day } = zonedParts(date, timeZone);
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
