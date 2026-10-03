@@ -43,6 +43,12 @@ function plural(count: number, singular: string, pluralForm: string) {
   return count === 1 ? singular : pluralForm;
 }
 
+// La descrizione si mostra sempre per intero. Gli a capo scritti da chi ha proposto la
+// richiesta vengono rispettati (<br>), perché molti client di posta ignorano pre-line.
+function descriptionToHtml(text: string) {
+  return escapeHtml(text.trim().replace(/\r\n|\r/g, "\n").replace(/\n{3,}/g, "\n\n")).replace(/\n/g, "<br>");
+}
+
 function buildRecapEmailHtml(params: {
   recipientName: string;
   organizationName: string;
@@ -60,7 +66,6 @@ function buildRecapEmailHtml(params: {
 
   const itemsHtml = items
     .map((item) => {
-      const excerpt = item.description.length > 180 ? `${item.description.slice(0, 180)}…` : item.description;
       const badge = item.isNew
         ? `<span style="display:inline-block;background:#B8912F;color:#ffffff;font:700 10px ${SANS};letter-spacing:.06em;text-transform:uppercase;border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:middle;">Nuova</span>`
         : "";
@@ -70,7 +75,7 @@ function buildRecapEmailHtml(params: {
       return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px;background:#F7F5EF;border-left:4px solid ${item.isNew ? "#B8912F" : "#C9C3B0"};border-radius:6px;"><tr><td style="padding:14px 16px;">
       <div style="font:700 15px/1.35 ${SERIF};color:#1C1F26;">${escapeHtml(item.title)}${badge}</div>
       <div style="font:12px/1.4 ${SANS};color:#8B8471;margin:4px 0 8px;">Proposta da ${escapeHtml(item.authorName)} · ${formatShortDate(item.createdAt)}${attachments}</div>
-      <div style="font:13px/1.55 ${SANS};color:#4A5164;">${escapeHtml(excerpt)}</div>
+      <div style="font:13px/1.55 ${SANS};color:#4A5164;word-break:break-word;overflow-wrap:anywhere;">${descriptionToHtml(item.description)}</div>
     </td></tr></table>`;
     })
     .join("");
