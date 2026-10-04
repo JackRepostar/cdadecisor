@@ -31,8 +31,8 @@ export default async function NuovaRichiestaPage() {
         <h1 className="font-display text-[22px] font-semibold">Sottoponi una richiesta</h1>
         <p className="mt-0.5 text-[13px] text-ink-soft">
           {isAdmin
-            ? "Crea una richiesta per conto di un membro del Consiglio."
-            : "Descrivi la proposta: verrà inviata via email a tutti i membri del Consiglio per il voto."}
+            ? "Crea una richiesta per conto di un membro del Consiglio: sarà subito visibile a tutti."
+            : "Descrivi la proposta: sarà subito visibile ai membri del Consiglio, che la riceveranno anche via email nel recap dei giorni lavorativi."}
         </p>
       </div>
 

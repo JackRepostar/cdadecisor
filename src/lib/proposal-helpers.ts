@@ -25,12 +25,11 @@ export function wasSubmittedByAdmin(proposal: { authorId: string; createdById: s
   return proposal.authorId !== proposal.createdById;
 }
 
-// Una richiesta è "nuova" per 24 ore dalla pubblicazione (l'invio del recap dà invece
-// per nuove, per costruzione, quelle pubblicate proprio in quell'esecuzione).
-const NEW_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-export function isNewlyPublished(proposal: { publishedAt: Date | null }, now: Date = new Date()) {
-  return proposal.publishedAt !== null && now.getTime() - proposal.publishedAt.getTime() < NEW_WINDOW_MS;
+// Una richiesta è "nuova" se è stata pubblicata dopo l'istante `since` (vedi
+// getNewSince in recap-window.ts): cioè finché non è stata segnalata via email e fino
+// al recap successivo, così l'app e l'email indicano sempre le stesse richieste.
+export function isNewSince(proposal: { publishedAt: Date | null; createdAt: Date }, since: Date) {
+  return (proposal.publishedAt ?? proposal.createdAt).getTime() > since.getTime();
 }
 
 /**

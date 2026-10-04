@@ -83,7 +83,10 @@ export async function createProposalAction(
       description,
       authorId,
       createdById: member.id,
-      status: "DRAFT",
+      // Pubblicata subito, in tempo reale: è visibile al Consiglio appena creata.
+      // L'email di recap (giorni lavorativi alle 15:00) resta un canale a parte.
+      status: "OPEN",
+      publishedAt: new Date(),
       attachments: {
         create: savedAttachments.map((a) => ({
           filename: a.filename,
@@ -98,8 +101,6 @@ export async function createProposalAction(
     },
   });
 
-  // Non viene pubblicata subito: il blocco giornaliero (dopo le 15:00) la renderà
-  // visibile al Consiglio insieme alle altre richieste accumulate nella giornata.
   revalidatePath("/richieste");
   revalidatePath("/registro");
   redirect(member.role === "ADMIN" ? "/registro?inviata=1" : "/richieste?inviata=1");

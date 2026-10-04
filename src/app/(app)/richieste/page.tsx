@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { requireMember } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { describeNextPublish } from "@/lib/publish";
-import { isNewlyPublished, orderForMember } from "@/lib/proposal-helpers";
+import { isNewSince, orderForMember } from "@/lib/proposal-helpers";
+import { getNewSince } from "@/lib/recap-window";
 import { ProposalCard } from "@/components/proposal-card";
 import { EmptyState, Callout } from "@/components/ui";
 
@@ -14,14 +15,14 @@ export default async function RichiesteAperteBoardPage({ searchParams }: PagePro
   const params = await searchParams;
   const justCreated = params.inviata === "1";
 
-  const now = new Date();
+  const newSince = await getNewSince(member.organizationId);
   const openProposals = await prisma.proposal.findMany({
     where: { organizationId: member.organizationId, status: "OPEN" },
     include: { author: true, votes: true, attachments: true, staffAssignments: true },
   });
   // Prima le nuove; poi quelle su cui devo ancora votare; poi le altre, le più recenti per prime.
   const proposals = orderForMember(openProposals, {
-    isNew: (p) => isNewlyPublished(p, now),
+    isNew: (p) => isNewSince(p, newSince),
     needsAction: (p) => !p.votes.some((v) => v.memberId === member.id),
   });
 
@@ -35,9 +36,9 @@ export default async function RichiesteAperteBoardPage({ searchParams }: PagePro
       </div>
 
       {justCreated && (
-        <Callout tone="gold" title="Richiesta registrata">
-          Sarà resa visibile al Consiglio insieme alle altre richieste raccolte,{" "}
-          {describeNextPublish()}.
+        <Callout tone="gold" title="Richiesta pubblicata">
+          È già visibile al Consiglio nella piattaforma. Sarà segnalata anche via email nel
+          recap di {describeNextPublish()}.
         </Callout>
       )}
 
@@ -50,7 +51,7 @@ export default async function RichiesteAperteBoardPage({ searchParams }: PagePro
               key={p.id}
               proposal={p}
               myVote={p.votes.find((v) => v.memberId === member.id)}
-              isNew={isNewlyPublished(p, now)}
+              isNew={isNewSince(p, newSince)}
             />
           ))}
         </div>

@@ -2,14 +2,15 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireMember, displayName } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { formatDate, isNewlyPublished, orderForMember } from "@/lib/proposal-helpers";
+import { formatDate, isNewSince, orderForMember } from "@/lib/proposal-helpers";
+import { getNewSince } from "@/lib/recap-window";
 import { Pill, EmptyState } from "@/components/ui";
 
 export default async function RichiesteAssegnatePage() {
   const member = await requireMember();
   if (member.role !== "STAFF") redirect("/");
 
-  const now = new Date();
+  const newSince = await getNewSince(member.organizationId);
   const found = await prisma.staffAssignment.findMany({
     where: { memberId: member.id },
     include: {
@@ -22,7 +23,7 @@ export default async function RichiesteAssegnatePage() {
   const assignments = orderForMember(
     found.map((a) => ({ ...a, publishedAt: a.proposal.publishedAt, createdAt: a.proposal.createdAt })),
     {
-      isNew: (a) => a.proposal.status === "OPEN" && isNewlyPublished(a.proposal, now),
+      isNew: (a) => a.proposal.status === "OPEN" && isNewSince(a.proposal, newSince),
       needsAction: (a) => a.proposal.status === "OPEN" && a.proposal.staffFeedback.length === 0,
     }
   );
@@ -55,7 +56,7 @@ export default async function RichiesteAssegnatePage() {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1.5">
-                      {proposal.status === "OPEN" && isNewlyPublished(proposal, now) && (
+                      {proposal.status === "OPEN" && isNewSince(proposal, newSince) && (
                         <Pill tone="new">Nuova</Pill>
                       )}
                       {proposal.status === "OPEN" ? (

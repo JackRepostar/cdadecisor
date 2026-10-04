@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { displayName } from "@/lib/member-format";
 import { isEmailSendingEnabled, sendEmails, type OutgoingEmail } from "@/lib/email-sender";
 import { createRecapLoginUrls } from "@/lib/magic-link";
-import { orderForMember } from "@/lib/proposal-helpers";
+import { isNewSince, orderForMember } from "@/lib/proposal-helpers";
 import { APP_TIMEZONE } from "@/lib/timezone";
 
 function escapeHtml(value: string) {
@@ -130,9 +130,7 @@ function buildRecapEmailHtml(params: {
  * inviata") viene salvata una copia con il link normale alla piattaforma, solo per
  * le richieste nuove di questa esecuzione.
  */
-export async function sendRecapForOrganization(organizationId: string, newProposalIds: string[]) {
-  const newIds = new Set(newProposalIds);
-
+export async function sendRecapForOrganization(organizationId: string, newSince: Date) {
   const [organization, openProposals, members, assignedStaff] = await Promise.all([
     prisma.organization.findUniqueOrThrow({ where: { id: organizationId }, select: { name: true } }),
     prisma.proposal.findMany({
@@ -155,9 +153,13 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
     }),
   ]);
 
+  // Nuove = pubblicate dopo il recap precedente: non erano ancora state segnalate via email.
+  const newIds = new Set(openProposals.filter((p) => isNewSince(p, newSince)).map((p) => p.id));
+  const newCount = newIds.size;
+
   const staffEverAssigned = new Set(assignedStaff.map((a) => a.memberId));
   const recipients = members.filter((m) => m.role === "BOARD" || staffEverAssigned.has(m.id));
-  if (recipients.length === 0) return { recipients: 0, sent: 0, failed: 0, firstError: null as string | null };
+  if (recipients.length === 0) return { newCount, recipients: 0, sent: 0, failed: 0, firstError: null as string | null };
 
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
   const now = new Date();
@@ -198,9 +200,8 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
       isNew: newIds.has(p.id),
     }));
     const count = items.length;
-    const newCount = items.filter((i) => i.isNew).length;
-    const todayNote =
-      newCount === 0 ? "" : newCount === 1 ? " Una è stata pubblicata oggi." : ` ${newCount} sono state pubblicate oggi.`;
+    const itemsNew = items.filter((i) => i.isNew).length;
+    const newNote = itemsNew === 0 ? "" : " Quelle contrassegnate come nuove non ti erano ancora state segnalate via email.";
 
     let subject: string;
     let content: Pick<Parameters<typeof buildRecapEmailHtml>[0], "intro" | "preheader" | "ctaLabel" | "emptyMessage">;
@@ -212,10 +213,10 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
       content = {
         ctaLabel: isBoard ? "Vota" : "Esprimi il tuo parere",
         intro: isBoard
-          ? `Queste sono le richieste del Consiglio che attendono il tuo voto.${todayNote}`
-          : `Queste sono le richieste del Consiglio per cui è richiesto il tuo parere consultivo, che non è vincolante.${todayNote}`,
+          ? `Queste sono le richieste del Consiglio che attendono il tuo voto.${newNote}`
+          : `Queste sono le richieste del Consiglio per cui è richiesto il tuo parere consultivo, che non è vincolante.${newNote}`,
         preheader: isBoard
-          ? `${newCount ? `${newCount} ${plural(newCount, "nuova", "nuove")} oggi. ` : ""}Apri CdaDecisor per votare.`
+          ? `${itemsNew ? `${itemsNew} ${plural(itemsNew, "nuova", "nuove")}. ` : ""}Apri CdaDecisor per votare.`
           : "Apri CdaDecisor per lasciare il tuo parere.",
       };
     } else {
@@ -271,13 +272,16 @@ export async function sendRecapForOrganization(organizationId: string, newPropos
 
   if (archive.length > 0) await prisma.emailNotification.createMany({ data: archive });
 
-  if (messages.length === 0) return { recipients: recipients.length, sent: 0, failed: 0, firstError: null as string | null };
+  if (messages.length === 0) {
+    return { newCount, recipients: recipients.length, sent: 0, failed: 0, firstError: null as string | null };
+  }
 
   const { sent, failed } = await sendEmails(messages);
   for (const failure of failed) {
     console.error(`Recap non consegnato a ${failure.to}: ${failure.error}`);
   }
   return {
+    newCount,
     recipients: recipients.length,
     sent,
     failed: failed.length,

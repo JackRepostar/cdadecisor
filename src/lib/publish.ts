@@ -6,14 +6,14 @@ import { sendRecapForOrganization } from "@/lib/notifications";
 import { zonedTodayAt, zonedDateKey } from "@/lib/timezone";
 import { addCivilDays, civilDateOf, isWorkingCivilDate, isWorkingDay } from "@/lib/calendar-it";
 
-// Ora locale (fuso Europa/Roma, non quello del server) dopo la quale le richieste
-// accumulate nella giornata vengono pubblicate tutte insieme al Consiglio (non in
-// tempo reale) e parte il recap giornaliero.
+// Ora locale (fuso Europa/Roma, non quello del server) dopo la quale parte il recap
+// giornaliero via email (nei giorni lavorativi). Le richieste, invece, sono visibili
+// nell'app in tempo reale, appena create.
 const PUBLISH_HOUR = 15;
 
 /**
- * Testo da mostrare a chi ha appena creato una richiesta: quando diventerà visibile.
- * Il sabato, la domenica e i festivi non si pubblica: si indica il prossimo giorno
+ * Quando parte il prossimo recap via email (le richieste sono già visibili nell'app).
+ * Il sabato, la domenica e i festivi non parte nulla: si indica il prossimo giorno
  * lavorativo (es. "lunedì 5 ottobre alle 15:00").
  */
 export function describeNextPublish(now: Date = new Date()) {
@@ -41,34 +41,33 @@ async function runDailyRecapForOrganization(organizationId: string, day: string,
   // esecuzione se cron e visite al sito arrivano insieme; le altre non fanno nulla.
   let run;
   try {
-    run = await prisma.recapRun.create({ data: { organizationId, day } });
+    run = await prisma.recapRun.create({ data: { organizationId, day, createdAt: now } });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
     throw error;
   }
 
-  const drafts = await prisma.proposal.findMany({
+  // Rete di sicurezza: le richieste nascono già pubblicate. Se ne restasse qualcuna in
+  // bozza (ad esempio creata durante un aggiornamento del sito) la si pubblica qui.
+  await prisma.proposal.updateMany({
     where: { organizationId, status: "DRAFT" },
-    select: { id: true },
+    data: { status: "OPEN", publishedAt: now },
   });
-  const published = drafts.length
-    ? await prisma.proposal.updateManyAndReturn({
-        where: { id: { in: drafts.map((d) => d.id) }, status: "DRAFT" },
-        data: { status: "OPEN", publishedAt: now },
-        select: { id: true },
-      })
-    : [];
 
-  // Un errore nell'invio non deve mai annullare né bloccare la pubblicazione.
+  // Nuove = pubblicate dopo il recap precedente (o tutte, se è il primo).
+  const previous = await prisma.recapRun.findFirst({
+    where: { organizationId, createdAt: { lt: run.createdAt } },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+
+  // Un errore nell'invio non deve mai bloccare il resto.
   try {
-    const result = await sendRecapForOrganization(
-      organizationId,
-      published.map((p) => p.id)
-    );
+    const result = await sendRecapForOrganization(organizationId, previous?.createdAt ?? new Date(0));
     await prisma.recapRun.update({
       where: { id: run.id },
       data: {
-        published: published.length,
+        published: result.newCount,
         recipients: result.recipients,
         sent: result.sent,
         failed: result.failed,
@@ -79,10 +78,7 @@ async function runDailyRecapForOrganization(organizationId: string, day: string,
     console.error("Invio del recap fallito:", error);
     await prisma.recapRun.update({
       where: { id: run.id },
-      data: {
-        published: published.length,
-        error: (error instanceof Error ? error.message : String(error)).slice(0, 300),
-      },
+      data: { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) },
     });
   }
 }
@@ -90,16 +86,14 @@ async function runDailyRecapForOrganization(organizationId: string, day: string,
 /**
  * Da chiamare una volta per richiesta (layout dell'area autenticata) e dal cron.
  * Nei giorni lavorativi, dopo le 15:00 (fuso Europa/Roma), per ogni azienda che oggi
- * non ha ancora avuto il suo recap: pubblica in blocco le richieste ancora in bozza e invia a ogni consigliere
- * e membro dello staff il recap giornaliero. Le richieste create dopo le 15:00 restano
- * in coda per domani, anche se qualcuno visita il sito nel frattempo. Trigger: la
- * chiamata del cron (vedi /api/cron/tick e vercel.json) oppure il primo accesso dopo
- * le 15:00, così tutto parte anche senza visite.
+ * non ha ancora avuto il suo recap: invia a ogni consigliere e membro dello staff il
+ * recap giornaliero. Trigger: la chiamata del cron (vedi /api/cron/tick e vercel.json)
+ * oppure il primo accesso dopo le 15:00, così tutto parte anche senza visite.
  */
 export const publishDueProposals = cache(async () => {
   const now = new Date();
-  // Sabato, domenica e festivi non si pubblica e non si invia nulla: le richieste
-  // restano in coda per il primo giorno lavorativo successivo.
+  // Sabato, domenica e festivi non si invia nulla: il recap riprende il primo giorno
+  // lavorativo successivo e comprende tutto ciò che è arrivato nel frattempo.
   if (!isWorkingDay(now)) return;
   if (now < zonedTodayAt(PUBLISH_HOUR, now)) return;
 
