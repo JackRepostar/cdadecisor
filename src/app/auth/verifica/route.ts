@@ -14,7 +14,8 @@ function redirectToLogin(request: NextRequest, reason: string) {
  * Aprire il link NON consuma il token: serve una richiesta POST. Gli antivirus e i
  * filtri link delle aziende (Safe Links, ecc.) visitano in anticipo gli URL delle
  * email con una GET: se bastasse quella, brucerebbero il link prima del destinatario.
- * La pagina invia il modulo da sola, quindi per una persona l'accesso resta diretto.
+ * Il modulo NON si invia da solo: scanner e anteprime (app di posta, antivirus) eseguono
+ * il JavaScript delle pagine e brucerebbero il link; serve un tocco su "Entra".
  */
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get("token");
@@ -28,10 +29,10 @@ export async function GET(request: NextRequest) {
 .box{text-align:center;padding:24px}.logo{width:44px;height:44px;margin:0 auto 14px;border-radius:12px;background:#1B2A41;color:#F1E6C8;display:flex;align-items:center;justify-content:center;font-weight:600}
 p{font-family:Arial,sans-serif;font-size:14px;color:#4A5164;margin:6px 0 18px}
 button{background:#1B2A41;color:#F1E6C8;border:0;border-radius:8px;padding:12px 28px;font:700 14px Arial,sans-serif;cursor:pointer}</style></head>
-<body><div class="box"><div class="logo">CdA</div><p>Accesso a CdaDecisor in corso…</p>
+<body><div class="box"><div class="logo">CdA</div><p>Premi il pulsante per entrare in CdaDecisor.</p>
 <form method="post" action="/auth/verifica"><input type="hidden" name="token" value="${token}">
 <button type="submit">Entra</button></form></div>
-<script>document.forms[0].submit();</script></body></html>`;
+</body></html>`;
 
   return new NextResponse(html, {
     headers: {
